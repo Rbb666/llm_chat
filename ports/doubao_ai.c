@@ -68,8 +68,6 @@ char *doubao_llm_answer(const char *input_text)
     cJSON_AddStringToObject(user_message, "content", input_text);
 
     char *payload = cJSON_PrintUnformatted(root);
-    rt_kprintf("Payload: %s\n", payload);
-
     if (webclient_request(API_URL, header, (const char *)payload, rt_strlen(payload), (void **)&response, &resp_len) < 0)
     {
         rt_kprintf("Webclient send post request failed.\n");

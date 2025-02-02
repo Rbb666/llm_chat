@@ -12,6 +12,6 @@ if GetDepend(['PKG_LLM_USING_DOUBAO_CLOUD']):
     path += [cwd + '/ports']
     src += Glob('ports/doubao_ai.c')
 
-group = DefineGroup('llm', src, depend = ['PKG_USING_LLM'], CPPPATH = path)
+group = DefineGroup('llm', src, depend = ['PKG_USING_LLMCHAT'], CPPPATH = path)
 
 Return('group')
