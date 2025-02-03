@@ -18,9 +18,10 @@
 #define LLM_API_URL PKG_LLM_QWEN_API_URL
 #elif defined(PKG_LLM_DOUBAO_API_URL)
 #define LLM_API_URL PKG_LLM_DOUBAO_API_URL
+#elif defined(PKG_LLM_DEEPSEEK_API_URL)
+#define LLM_API_URL PKG_LLM_DEEPSEEK_API_URL
 #endif
 #define LLM_MODEL_NAME PKG_LLM_MODEL_NAME
-
 #define WEB_SORKET_BUFSZ PKG_WEB_SORKET_BUFSZ
 
 char *get_llm_answer(const char *input_text)
