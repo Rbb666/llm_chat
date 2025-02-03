@@ -21,9 +21,7 @@
 
 #### 通义千问
 
-注册[阿里云](https://www.aliyun.com/product/bailian?spm=5176.28103460.0.0.5abc5d27J2SWgK)账号，并进入阿里云百炼平台：
-
-选择模型广场→API调用示例
+注册[阿里云](https://www.aliyun.com/product/bailian?spm=5176.28103460.0.0.5abc5d27J2SWgK)账号，并进入阿里云百炼平台：选择模型广场→API调用示例
 
 ![](docs/2.png)
 

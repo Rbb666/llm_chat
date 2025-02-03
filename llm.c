@@ -337,14 +337,7 @@ static int llm2rtt(int argc, char **argv)
     rt_sem_init(&(handle.rx_sem), "llm_rxsem", 0, RT_IPC_FLAG_FIFO);
 
     handle.argc = argc;
-
-#if defined(PKG_LLM_USING_QWEN_CLOUD)
-    handle.get_answer = qwen_llm_answer;
-#elif defined(PKG_LLM_USING_DOUBAO_CLOUD)
-    handle.get_answer = doubao_llm_answer;
-#else
-    #error "Please select at least one llm model."
-#endif
+    handle.get_answer = get_llm_answer;
 
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
     handle.thread = rt_thread_create("llm", llm_run, RT_NULL, LLM_THREAD_STACK_SIZE, prio, 10);

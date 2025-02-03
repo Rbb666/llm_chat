@@ -65,10 +65,6 @@ struct llm_obj
 };
 typedef struct llm_obj *llm_t;
 
-#if defined(PKG_LLM_USING_QWEN_CLOUD)
-    char *qwen_llm_answer(const char *input_text);
-#elif defined(PKG_LLM_USING_DOUBAO_CLOUD)
-    char *doubao_llm_answer(const char *input_text);
-#endif
+char *get_llm_answer(const char *input_text);
 
 #endif

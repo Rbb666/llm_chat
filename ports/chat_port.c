@@ -1,30 +1,36 @@
 /*
  * Copyright (c) 2006-2025, RT-Thread Development Team
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Change Logs:
  * Date           Author       Notes
  * 2025/02/01     Rbb666       Add license info
+ * 2025/02/03     Rbb666       Unified Adaptive Interface
  */
 #include "llm.h"
 
 #include <webclient.h>
 #include <cJSON.h>
 
-#define API_KEY PKG_LLM_QWEN_API_KEY
-#define API_URL PKG_LLM_QWEN_API_URL
+#define LLM_API_KEY PKG_LLM_API_KEY
+#if defined(PKG_LLM_QWEN_API_URL)
+#define LLM_API_URL PKG_LLM_QWEN_API_URL
+#elif defined(PKG_LLM_DOUBAO_API_URL)
+#define LLM_API_URL PKG_LLM_DOUBAO_API_URL
+#endif
+#define LLM_MODEL_NAME PKG_LLM_MODEL_NAME
 
-#define WEB_SORKET_BUFSZ 2048
+#define WEB_SORKET_BUFSZ PKG_WEB_SORKET_BUFSZ
 
-char *qwen_llm_answer(const char *input_text)
+char *get_llm_answer(const char *input_text)
 {
     size_t resp_len = 0;
     char auth_header[128];
     struct webclient_session *session = RT_NULL;
     char *buffer = RT_NULL, *header = RT_NULL;
     char *response = RT_NULL, *result = RT_NULL;
-    cJSON *response_root = NULL;
+    cJSON *response_root = RT_NULL;
 
     buffer = (char *)web_malloc(WEB_SORKET_BUFSZ);
     if (buffer == RT_NULL)
@@ -40,13 +46,13 @@ char *qwen_llm_answer(const char *input_text)
         goto __exit;
     }
 
-    rt_snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s\r\n", API_KEY);
+    rt_snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s\r\n", LLM_API_KEY);
 
     webclient_request_header_add(&header, "Content-Type: application/json\r\n");
     webclient_request_header_add(&header, auth_header);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON *model = cJSON_CreateString(PKG_LLM_QWEN_MODEL_NAME);
+    cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
     cJSON *messages = cJSON_CreateArray();
     cJSON *system_message = cJSON_CreateObject();
     cJSON *user_message = cJSON_CreateObject();
@@ -65,7 +71,7 @@ char *qwen_llm_answer(const char *input_text)
 
     char *payload = cJSON_PrintUnformatted(root);
 
-    if (webclient_request(API_URL, header, (const char *)payload, rt_strlen(payload), (void **)&response, &resp_len) < 0)
+    if (webclient_request(LLM_API_URL, header, (const char *)payload, rt_strlen(payload), (void **)&response, &resp_len) < 0)
     {
         rt_kprintf("Webclient send post request failed.\n");
         goto __exit;
