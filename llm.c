@@ -338,8 +338,11 @@ static int llm2rtt(int argc, char **argv)
     handle.argc = argc;
     handle.get_answer = get_llm_answer;
 
+#if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
-
+#else
+    rt_uint8_t prio = rt_thread_self()->current_priority + 1;
+#endif
     rt_err_t result = rt_thread_init(&handle.thread,
                                      "llm_td",
                                      llm_run, RT_NULL,
