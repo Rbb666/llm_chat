@@ -40,14 +40,14 @@ static void llm_push_history(void)
     {
         if (handle.history_count >= LLM_HISTORY_LINES)
         {
-            if (rt_memcmp(&handle.llm_history[LLM_HISTORY_LINES - 1], handle.line, LLM_CMD_SIZE))
+            if (rt_memcmp(&handle.llm_history[LLM_HISTORY_LINES - 1], handle.line, PKG_LLM_CMD_BUFFER_SIZE))
             {
                 int index;
                 for (index = 0; index < FINSH_HISTORY_LINES - 1; index ++)
                 {
-                    rt_memcpy(&handle.llm_history[index][0], &handle.llm_history[index + 1][0], LLM_CMD_SIZE);
+                    rt_memcpy(&handle.llm_history[index][0], &handle.llm_history[index + 1][0], PKG_LLM_CMD_BUFFER_SIZE);
                 }
-                rt_memset(&handle.llm_history[index][0], 0, LLM_CMD_SIZE);
+                rt_memset(&handle.llm_history[index][0], 0, PKG_LLM_CMD_BUFFER_SIZE);
                 rt_memcpy(&handle.llm_history[index][0], handle.line, handle.line_position);
 
                 handle.history_count = LLM_HISTORY_LINES;
@@ -55,10 +55,10 @@ static void llm_push_history(void)
         }
         else
         {
-            if (handle.history_count == 0 || rt_memcmp(&handle.llm_history[handle.history_count - 1], handle.line, LLM_CMD_SIZE))
+            if (handle.history_count == 0 || rt_memcmp(&handle.llm_history[handle.history_count - 1], handle.line, PKG_LLM_CMD_BUFFER_SIZE))
             {
                 handle.history_current = handle.history_count;
-                rt_memset(&handle.llm_history[handle.history_count][0], 0, LLM_CMD_SIZE);
+                rt_memset(&handle.llm_history[handle.history_count][0], 0, PKG_LLM_CMD_BUFFER_SIZE);
                 rt_memcpy(&handle.llm_history[handle.history_count][0], handle.line, handle.line_position);
 
                 handle.history_count++;
@@ -110,7 +110,7 @@ start:
                     continue;
                 }
 
-                rt_memcpy(handle.line, &handle.llm_history[handle.history_current][0], LLM_CMD_SIZE);
+                rt_memcpy(handle.line, &handle.llm_history[handle.history_current][0], PKG_LLM_CMD_BUFFER_SIZE);
                 handle.line_curpos = handle.line_position = rt_strlen(handle.line);
                 llm_handle_history(prompt);
 
@@ -134,7 +134,7 @@ start:
                     }
                 }
 
-                rt_memcpy(handle.line, &handle.llm_history[handle.history_current][0], LLM_CMD_SIZE);
+                rt_memcpy(handle.line, &handle.llm_history[handle.history_current][0], PKG_LLM_CMD_BUFFER_SIZE);
                 handle.line_curpos = handle.line_position = rt_strlen(handle.line);
                 llm_handle_history(prompt);
 
@@ -235,7 +235,7 @@ start:
             continue;
         }
 
-        if (handle.line_position >= LLM_CMD_SIZE)
+        if (handle.line_position >= PKG_LLM_CMD_BUFFER_SIZE)
         {
             continue;
         }
@@ -268,7 +268,7 @@ start:
 
 static void llm_run(void *p)
 {
-    char input_buffer[LLM_CMD_SIZE] = {0};
+    char input_buffer[PKG_LLM_CMD_BUFFER_SIZE] = {0};
     const char *device_name = RT_CONSOLE_DEVICE_NAME;
 
     handle.device = rt_device_find(device_name);
@@ -288,7 +288,7 @@ static void llm_run(void *p)
 
     while (1)
     {
-        int length = llm_readline("Enter command: ", input_buffer, LLM_CMD_SIZE);
+        int length = llm_readline("Enter command: ", input_buffer, PKG_LLM_CMD_BUFFER_SIZE);
 
         if (length == 0)
         {
@@ -298,7 +298,7 @@ static void llm_run(void *p)
         else if (length > 0)
         {
             char *result = handle.get_answer(input_buffer);
-            rt_kprintf("@LLM Answers: %s\n", result);
+            rt_free(result);
         }
         else
         {
@@ -324,10 +324,9 @@ static int llm2rtt(int argc, char **argv)
     }
     else
     {
-        handle.thread = RT_NULL;
         handle.stat = LLM_WAIT_NORMAL;
         handle.argc = 0;
-        rt_memset(handle.line, 0x00, LLM_CMD_SIZE);
+        rt_memset(handle.line, 0x00, PKG_LLM_CMD_BUFFER_SIZE);
         handle.line_position = 0;
         handle.line_curpos = 0;
         handle.device = RT_NULL;
@@ -340,14 +339,19 @@ static int llm2rtt(int argc, char **argv)
     handle.get_answer = get_llm_answer;
 
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
-    handle.thread = rt_thread_create("llm", llm_run, RT_NULL, LLM_THREAD_STACK_SIZE, prio, 10);
-    if (handle.thread == RT_NULL)
+
+    rt_err_t result = rt_thread_init(&handle.thread,
+                                     "llm_td",
+                                     llm_run, RT_NULL,
+                                     &handle.thread_stack[0], sizeof(handle.thread_stack),
+                                     prio, 10);
+    if (result != RT_EOK)
     {
         rt_sem_detach(&(handle.rx_sem));
         LLM_DBG("The llm interpreter thread create failed.\n");
         return RT_ERROR;
     }
-    rt_thread_startup(handle.thread);
+    rt_thread_startup(&handle.thread);
 
     return RT_EOK;
 }

@@ -7,124 +7,157 @@
  * Date           Author       Notes
  * 2025/02/01     Rbb666       Add license info
  * 2025/02/03     Rbb666       Unified Adaptive Interface
+ * 2025/02/06     Rbb666       Add http stream support
  */
 #include "llm.h"
-
-#include <webclient.h>
+#include "webclient.h"
 #include <cJSON.h>
 
 #define LLM_API_KEY PKG_LLM_API_KEY
 #if defined(PKG_LLM_QWEN_API_URL)
-#define LLM_API_URL PKG_LLM_QWEN_API_URL
+    #define LLM_API_URL PKG_LLM_QWEN_API_URL
 #elif defined(PKG_LLM_DOUBAO_API_URL)
-#define LLM_API_URL PKG_LLM_DOUBAO_API_URL
+    #define LLM_API_URL PKG_LLM_DOUBAO_API_URL
 #elif defined(PKG_LLM_DEEPSEEK_API_URL)
-#define LLM_API_URL PKG_LLM_DEEPSEEK_API_URL
+    #define LLM_API_URL PKG_LLM_DEEPSEEK_API_URL
 #endif
 #define LLM_MODEL_NAME PKG_LLM_MODEL_NAME
-#define WEB_SORKET_BUFSZ PKG_WEB_SORKET_BUFSZ
+#define WEB_SOCKET_BUF_SIZE PKG_WEB_SORKET_BUFSZ
 
-char *get_llm_answer(const char *input_text)
+static char authHeader[128] = {0};
+static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
+static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
+
+char *get_llm_answer(const char *inputText)
 {
-    size_t resp_len = 0;
-    char auth_header[128];
-    struct webclient_session *session = RT_NULL;
-    char *buffer = RT_NULL, *header = RT_NULL;
-    char *response = RT_NULL, *result = RT_NULL;
-    cJSON *response_root = RT_NULL;
+    struct webclient_session *webSession = NULL;
+    char *allContent = NULL;
+    int bytesRead, responseStatus;
+    cJSON *responseRoot = NULL;
 
-    buffer = (char *)web_malloc(WEB_SORKET_BUFSZ);
-    if (buffer == RT_NULL)
-    {
-        rt_kprintf("No memory for receive response buffer.\n");
-        goto __exit;
-    }
-
-    session = webclient_session_create(WEB_SORKET_BUFSZ);
-    if (session == RT_NULL)
+    // Create web session
+    webSession = webclient_session_create(WEB_SOCKET_BUF_SIZE);
+    if (webSession == NULL)
     {
         rt_kprintf("Failed to create webclient session.\n");
-        goto __exit;
+        goto cleanup;
     }
 
-    rt_snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s\r\n", LLM_API_KEY);
-
-    webclient_request_header_add(&header, "Content-Type: application/json\r\n");
-    webclient_request_header_add(&header, auth_header);
-
-    cJSON *root = cJSON_CreateObject();
+    // Create JSON payload
+    cJSON *requestRoot = cJSON_CreateObject();
     cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
     cJSON *messages = cJSON_CreateArray();
-    cJSON *system_message = cJSON_CreateObject();
-    cJSON *user_message = cJSON_CreateObject();
+    cJSON *systemMessage = cJSON_CreateObject();
+    cJSON *userMessage = cJSON_CreateObject();
 
-    cJSON_AddItemToObject(root, "model", model);
-    cJSON_AddItemToObject(root, "messages", messages);
+    cJSON_AddItemToObject(requestRoot, "model", model);
+    cJSON_AddItemToObject(requestRoot, "messages", messages);
+#ifdef PKG_LLMCHAT_STREAM
+    cJSON_AddBoolToObject(requestRoot, "stream", RT_TRUE);
+#else
+    cJSON_AddBoolToObject(requestRoot, "stream", RT_FALSE);
+#endif
+    cJSON_AddItemToArray(messages, systemMessage);
+    cJSON_AddItemToArray(messages, userMessage);
 
-    cJSON_AddItemToArray(messages, system_message);
-    cJSON_AddItemToArray(messages, user_message);
+    cJSON_AddStringToObject(systemMessage, "role", "system");
+    cJSON_AddStringToObject(systemMessage, "content", "");
 
-    cJSON_AddStringToObject(system_message, "role", "system");
-    cJSON_AddStringToObject(system_message, "content", "要求下面的回答严格控制在256字符以内");
+    cJSON_AddStringToObject(userMessage, "role", "user");
+    cJSON_AddStringToObject(userMessage, "content", inputText);
 
-    cJSON_AddStringToObject(user_message, "role", "user");
-    cJSON_AddStringToObject(user_message, "content", input_text);
-
-    char *payload = cJSON_PrintUnformatted(root);
-
-    if (webclient_request(LLM_API_URL, header, (const char *)payload, rt_strlen(payload), (void **)&response, &resp_len) < 0)
+    char *payload = cJSON_PrintUnformatted(requestRoot);
+    if (payload == NULL)
     {
-        rt_kprintf("Webclient send post request failed.\n");
-        goto __exit;
+        rt_kprintf("Failed to create JSON payload.\n");
+        goto cleanup;
     }
 
-    response_root = cJSON_Parse(response);
-    if (response_root == NULL)
+    // Prepare authorization header
+    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", LLM_API_KEY);
+
+    // Add headers
+    webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
+    webclient_header_fields_add(webSession, authHeader);
+    webclient_header_fields_add(webSession, "Content-Length: %d\r\n", rt_strlen(payload));
+
+    LLM_DBG("HTTP Header: %s\n", webSession->header->buffer);
+    LLM_DBG("HTTP Payload: %s\n", payload);
+
+    // Send POST request
+    responseStatus = webclient_post(webSession, LLM_API_URL, payload, rt_strlen(payload));
+    if (responseStatus != 200)
     {
-        const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL)
-        {
-            rt_kprintf("Error before: %s\n", error_ptr);
-        }
-        goto __exit;
+        rt_kprintf("Webclient POST request failed, response status: %d\n", responseStatus);
+        goto cleanup;
     }
 
-    cJSON *choices = cJSON_GetObjectItemCaseSensitive(response_root, "choices");
-    if (cJSON_IsArray(choices))
+    // Read and process response
+    while ((bytesRead = webclient_read(webSession, responseBuffer, WEB_SOCKET_BUF_SIZE)) > 0)
     {
-        cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
-        if (first_choice != NULL)
+        int inContent = 0;
+        for (int i = 0; i < bytesRead; i++)
         {
-            cJSON *message = cJSON_GetObjectItemCaseSensitive(first_choice, "message");
-            cJSON *content = cJSON_GetObjectItemCaseSensitive(message, "content");
-            if (cJSON_IsString(content) && content->valuestring != NULL)
+            if (inContent)
             {
-                result = rt_strdup(content->valuestring);
+                if (responseBuffer[i] == '"')
+                {
+                    inContent = 0;
+
+                    // Append content to allContent
+                    char *oldAllContent = allContent;
+                    size_t oldLen = oldAllContent ? rt_strlen(oldAllContent) : 0;
+                    size_t newLen = rt_strlen(contentBuffer);
+                    size_t totalLen = oldLen + newLen + 1;
+
+                    char *newAllContent = (char *)web_malloc(totalLen);
+                    if (newAllContent)
+                    {
+                        newAllContent[0] = '\0';
+                        if (oldAllContent)
+                        {
+                            rt_strcpy(newAllContent, oldAllContent);
+                        }
+                        strcat(newAllContent, contentBuffer);
+                        allContent = newAllContent;
+                        rt_kprintf("%s", contentBuffer);
+                        rt_free(oldAllContent);
+                    }
+                    else
+                    {
+                        rt_kprintf("Memory allocation failed, content truncated!\n");
+                    }
+
+                    contentBuffer[0] = '\0'; // Reset content buffer
+                }
+                else
+                {
+                    strncat(contentBuffer, &responseBuffer[i], 1);
+                }
+            }
+            else if (responseBuffer[i] == '"' && i > 8 &&
+                     rt_strncmp(&responseBuffer[i - 10], "\"content\":\"", 10) == 0)
+            {
+                inContent = 1;
             }
         }
     }
 
-__exit:
-    if (session)
-    {
-        webclient_close(session);
-        session = RT_NULL;
-    }
+    rt_kprintf("\n");
 
-    if (header)
-        web_free(header);
+cleanup:
+    // Cleanup resources
+    if (webSession)
+        webclient_close(webSession);
 
-    if (response)
-        web_free(response);
+    if (requestRoot)
+        cJSON_Delete(requestRoot);
 
-    if (buffer)
-        web_free(buffer);
+    if (responseRoot)
+        cJSON_Delete(responseRoot);
 
-    if (root)
-        cJSON_Delete(root);
+    if (payload)
+        cJSON_free(payload);
 
-    if (response_root)
-        cJSON_Delete(response_root);
-
-    return result;
+    return allContent;
 }
