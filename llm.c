@@ -6,6 +6,7 @@
  * Change Logs:
  * Date           Author       Notes
  * 2025/02/01     Rbb666       Add license info
+ * 2025/02/10     CXSforHPU    Add llm history support
  */
 #include "llm.h"
 #include "shell.h"
@@ -297,8 +298,34 @@ static void llm_run(void *p)
         }
         else if (length > 0)
         {
-            char *result = handle.get_answer(input_buffer);
-            rt_free(result);
+            #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
+            cJSON *message_user = cJSON_CreateObject(); // Create the object
+            cJSON_AddStringToObject(message_user, "role", "user"); // Add "role"
+            cJSON_AddStringToObject(message_user, "content", input_buffer); // Add "content"
+            cJSON_AddItemToArray(handle.messages, message_user); // Add to array
+            
+            char *result = handle.get_answer(handle.messages);
+            
+            cJSON *message_assistant = cJSON_CreateObject(); // Create the object
+            cJSON_AddStringToObject(message_assistant, "role", "assistant"); // Add "assitant"
+            cJSON_AddStringToObject(message_assistant, "content", result); // Add "content"
+            cJSON_AddItemToArray(handle.messages, message_assistant); // Add to array
+            
+            #else
+            cJSON *messages = cJSON_CreateArray();
+            cJSON *message_user = cJSON_CreateObject();
+            
+            cJSON_AddStringToObject(message_user, "role", "user");              // Add "role":"user"
+            cJSON_AddStringToObject(message_user, "content", input_buffer);     // Add "content":"ques"
+            cJSON_AddItemToArray(messages, message_user);                       // Add to array for payload
+
+            handle.get_answer(messages);
+
+            //clear memory
+            cJSON_Delete(messages);
+
+            #endif
+
         }
         else
         {
@@ -337,6 +364,7 @@ static int llm2rtt(int argc, char **argv)
 
     handle.argc = argc;
     handle.get_answer = get_llm_answer;
+    handle.messages = cJSON_CreateArray();
 
 #if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;

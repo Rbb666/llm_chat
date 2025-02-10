@@ -7,6 +7,7 @@
  * Change Logs:
  * Date           Author       Notes
  * 2025/02/01     Rbb666       Add license info
+ * 2025/02/10     CXSforHPU    Add llm history support
  */
 #ifndef __LLM_H_
 #define __LLM_H_
@@ -14,6 +15,7 @@
 #include <rtthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <cJSON.h>
 
 #ifndef PKG_LLMCHAT_DBG
 #define LLM_DBG(fmt, ...)
@@ -58,10 +60,11 @@ struct llm_obj
     rt_device_t device;
     rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size);
 
-    char *(*get_answer)(const char *input_text);
+    cJSON *messages;
+    char *(*get_answer)(const cJSON *messages);
 };
 typedef struct llm_obj *llm_t;
 
-char *get_llm_answer(const char *input_text);
+char *get_llm_answer(const cJSON *messages);
 
 #endif

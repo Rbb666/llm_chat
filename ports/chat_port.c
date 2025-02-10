@@ -8,6 +8,7 @@
  * 2025/02/01     Rbb666       Add license info
  * 2025/02/03     Rbb666       Unified Adaptive Interface
  * 2025/02/06     Rbb666       Add http stream support
+ * 2025/02/10     CXSforHPU    Add llm history support
  */
 #include "llm.h"
 #include "webclient.h"
@@ -27,13 +28,43 @@
 static char authHeader[128] = {0};
 static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
+static cJSON *requestRoot = NULL;
 
-char *get_llm_answer(const char *inputText)
+/********************************************************************************
+* @File name: chat_port.c
+* @Author: CXSforHPU
+* @Version: 1.1
+* @Date: 2025-2-10
+* @Description: create char for request payload.
+* @messages: your want to send messages:        example
+* {"role": "user", "content": "Hello!"}
+*
+* if you want to modify the request payload, you can modify the following code.
+********************************************************************************/
+char* create_payload(cJSON *messages) {
+
+    requestRoot = cJSON_CreateObject();
+    cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
+
+    cJSON_AddItemToObject(requestRoot, "model", model);
+    cJSON_AddItemToObject(requestRoot, "messages", messages);
+#ifdef PKG_LLMCHAT_STREAM
+    cJSON_AddBoolToObject(requestRoot, "stream", RT_TRUE);
+#else
+    cJSON_AddBoolToObject(requestRoot, "stream", RT_FALSE);
+#endif
+
+
+    return cJSON_PrintUnformatted(requestRoot);
+}
+
+
+char *get_llm_answer(const cJSON *messages)
 {
     struct webclient_session *webSession = NULL;
     char *allContent = NULL;
     int bytesRead, responseStatus;
-    cJSON *responseRoot = NULL;
+
 
     // Create web session
     webSession = webclient_session_create(WEB_SOCKET_BUF_SIZE);
@@ -44,29 +75,8 @@ char *get_llm_answer(const char *inputText)
     }
 
     // Create JSON payload
-    cJSON *requestRoot = cJSON_CreateObject();
-    cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
-    cJSON *messages = cJSON_CreateArray();
-    cJSON *systemMessage = cJSON_CreateObject();
-    cJSON *userMessage = cJSON_CreateObject();
+    char *payload = create_payload(messages);
 
-    cJSON_AddItemToObject(requestRoot, "model", model);
-    cJSON_AddItemToObject(requestRoot, "messages", messages);
-#ifdef PKG_LLMCHAT_STREAM
-    cJSON_AddBoolToObject(requestRoot, "stream", RT_TRUE);
-#else
-    cJSON_AddBoolToObject(requestRoot, "stream", RT_FALSE);
-#endif
-    cJSON_AddItemToArray(messages, systemMessage);
-    cJSON_AddItemToArray(messages, userMessage);
-
-    cJSON_AddStringToObject(systemMessage, "role", "system");
-    cJSON_AddStringToObject(systemMessage, "content", "");
-
-    cJSON_AddStringToObject(userMessage, "role", "user");
-    cJSON_AddStringToObject(userMessage, "content", inputText);
-
-    char *payload = cJSON_PrintUnformatted(requestRoot);
     if (payload == NULL)
     {
         rt_kprintf("Failed to create JSON payload.\n");
@@ -95,6 +105,9 @@ char *get_llm_answer(const char *inputText)
     // Read and process response
     while ((bytesRead = webclient_read(webSession, responseBuffer, WEB_SOCKET_BUF_SIZE)) > 0)
     {
+        // Clear responseBuffer
+        contentBuffer[0] = '\0';
+
         int inContent = 0;
         for (int i = 0; i < bytesRead; i++)
         {
@@ -120,7 +133,7 @@ char *get_llm_answer(const char *inputText)
                         }
                         strcat(newAllContent, contentBuffer);
                         allContent = newAllContent;
-                        rt_kprintf("%s", contentBuffer);
+                        // rt_kprintf("%s", contentBuffer);
                         rt_free(oldAllContent);
                     }
                     else
@@ -128,7 +141,7 @@ char *get_llm_answer(const char *inputText)
                         rt_kprintf("Memory allocation failed, content truncated!\n");
                     }
 
-                    contentBuffer[0] = '\0'; // Reset content buffer
+                    // contentBuffer[0] = '\0'; // Reset content buffer
                 }
                 else
                 {
@@ -141,9 +154,22 @@ char *get_llm_answer(const char *inputText)
                 inContent = 1;
             }
         }
+
+        //The returned data can be processed here
+        
+        if (contentBuffer != NULL) {
+            // Precalculate the length to avoid repeated calls to strlen
+            size_t len = strlen(contentBuffer);
+            for (size_t i = 0; i < len; i++) {
+                rt_kprintf("%c", contentBuffer[i]); 
+            }
+        }
+
     }
 
     rt_kprintf("\n");
+
+    return contentBuffer;
 
 cleanup:
     // Cleanup resources
@@ -152,9 +178,6 @@ cleanup:
 
     if (requestRoot)
         cJSON_Delete(requestRoot);
-
-    if (responseRoot)
-        cJSON_Delete(responseRoot);
 
     if (payload)
         cJSON_free(payload);
