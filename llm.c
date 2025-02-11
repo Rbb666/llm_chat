@@ -299,33 +299,19 @@ static void llm_run(void *p)
         else if (length > 0)
         {
 #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
-            cJSON *message_user = cJSON_CreateObject();                     // Create the object
-            cJSON_AddStringToObject(message_user, "role", "user");          // Add "role"
-            cJSON_AddStringToObject(message_user, "content", input_buffer); // Add "content"
-            cJSON_AddItemToArray(handle.messages, message_user);            // Add to array
+            add_message2messages(input_buffer, "user", &handle);
 
             char *result = handle.get_answer(handle.messages);
 
-            cJSON *message_assistant = cJSON_CreateObject();                 // Create the object
-            cJSON_AddStringToObject(message_assistant, "role", "assistant"); // Add "assitant"
-            cJSON_AddStringToObject(message_assistant, "content", result);   // Add "content"
-            cJSON_AddItemToArray(handle.messages, message_assistant);        // Add to array
+            add_message2messages(result, "assistant", &handle);
 
 #else
-            cJSON *messages = cJSON_CreateArray();
-            cJSON *message_user = cJSON_CreateObject();
 
-            cJSON_AddStringToObject(message_user, "role", "user");          // Add "role":"user"
-            cJSON_AddStringToObject(message_user, "content", input_buffer); // Add "content":"ques"
-            cJSON_AddItemToArray(messages, message_user);                   // Add to array for payload
+            add_message2messages(input_buffer, "user", &handle);
 
-            handle.get_answer(messages);
+            handle.get_answer(handle.messages);
 
-            // clear memory
-            if (messages)
-            {
-                cJSON_Delete(messages);
-            }
+            clear_messages(&handle);
 
 #endif
         }

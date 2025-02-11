@@ -57,6 +57,31 @@ char *create_payload(cJSON *messages)
     return cJSON_PrintUnformatted(requestRoot);
 }
 
+void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle)
+{
+    if (!cJSON_IsArray(handle->messages))
+    {
+        handle->messages = cJSON_CreateArray();
+    }
+
+    cJSON_AddItemToArray(handle->messages, create_message(input_buffer, role)); // Add to array
+}
+
+cJSON *create_message(const char *input_buffer, char *role)
+{
+    cJSON *message = cJSON_CreateObject();
+    cJSON_AddStringToObject(message, "role", role);
+    cJSON_AddStringToObject(message, "content", input_buffer);
+
+    return message;
+}
+
+void clear_messages(struct llm_obj *handle)
+{
+    cJSON_Delete(handle->messages);
+    handle->messages = cJSON_CreateArray();
+}
+
 char *get_llm_answer(cJSON *messages)
 {
     struct webclient_session *webSession = NULL;
@@ -80,7 +105,6 @@ char *get_llm_answer(cJSON *messages)
 
     // Create JSON payload
     char *payload = create_payload(messages);
-
     if (payload == NULL)
     {
         rt_kprintf("Failed to create JSON payload.\n");
