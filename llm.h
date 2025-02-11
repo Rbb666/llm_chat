@@ -68,5 +68,7 @@ struct llm_obj
 typedef struct llm_obj *llm_t;
 
 char *get_llm_answer(cJSON *messages);
-
+void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle);
+cJSON *create_message(const char *input_buffer, char *role);
+void clear_messages(struct llm_obj *handle);
 #endif
