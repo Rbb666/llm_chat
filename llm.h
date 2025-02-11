@@ -7,6 +7,7 @@
  * Change Logs:
  * Date           Author       Notes
  * 2025/02/01     Rbb666       Add license info
+ * 2025/02/01     Rbb666       Add history support
  * 2025/02/10     CXSforHPU    Add llm history support
  */
 #ifndef __LLM_H_
@@ -20,15 +21,16 @@
 #ifndef PKG_LLMCHAT_DBG
 #define LLM_DBG(fmt, ...)
 #else
-#define LLM_DBG(fmt, ...)                   \
-do{                                         \
-    rt_kprintf("[\033[32mLLM\033[0m] ");    \
-    rt_kprintf(fmt, ##__VA_ARGS__);         \
-}while(0)
+#define LLM_DBG(fmt, ...)                    \
+    do                                       \
+    {                                        \
+        rt_kprintf("[\033[32mLLM\033[0m] "); \
+        rt_kprintf(fmt, ##__VA_ARGS__);      \
+    } while (0)
 #endif
 
 #ifndef LLM_HISTORY_LINES
-    #define LLM_HISTORY_LINES 5
+#define LLM_HISTORY_LINES 5
 #endif
 
 enum llm_input_stat
@@ -61,10 +63,10 @@ struct llm_obj
     rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size);
 
     cJSON *messages;
-    char *(*get_answer)(const cJSON *messages);
+    char *(*get_answer)(cJSON *messages);
 };
 typedef struct llm_obj *llm_t;
 
-char *get_llm_answer(const cJSON *messages);
+char *get_llm_answer(cJSON *messages);
 
 #endif

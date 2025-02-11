@@ -44,7 +44,7 @@ static void llm_push_history(void)
             if (rt_memcmp(&handle.llm_history[LLM_HISTORY_LINES - 1], handle.line, PKG_LLM_CMD_BUFFER_SIZE))
             {
                 int index;
-                for (index = 0; index < FINSH_HISTORY_LINES - 1; index ++)
+                for (index = 0; index < FINSH_HISTORY_LINES - 1; index++)
                 {
                     rt_memcpy(&handle.llm_history[index][0], &handle.llm_history[index + 1][0], PKG_LLM_CMD_BUFFER_SIZE);
                 }
@@ -298,34 +298,36 @@ static void llm_run(void *p)
         }
         else if (length > 0)
         {
-            #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
-            cJSON *message_user = cJSON_CreateObject(); // Create the object
-            cJSON_AddStringToObject(message_user, "role", "user"); // Add "role"
+#ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
+            cJSON *message_user = cJSON_CreateObject();                     // Create the object
+            cJSON_AddStringToObject(message_user, "role", "user");          // Add "role"
             cJSON_AddStringToObject(message_user, "content", input_buffer); // Add "content"
-            cJSON_AddItemToArray(handle.messages, message_user); // Add to array
-            
+            cJSON_AddItemToArray(handle.messages, message_user);            // Add to array
+
             char *result = handle.get_answer(handle.messages);
-            
-            cJSON *message_assistant = cJSON_CreateObject(); // Create the object
+
+            cJSON *message_assistant = cJSON_CreateObject();                 // Create the object
             cJSON_AddStringToObject(message_assistant, "role", "assistant"); // Add "assitant"
-            cJSON_AddStringToObject(message_assistant, "content", result); // Add "content"
-            cJSON_AddItemToArray(handle.messages, message_assistant); // Add to array
-            
-            #else
+            cJSON_AddStringToObject(message_assistant, "content", result);   // Add "content"
+            cJSON_AddItemToArray(handle.messages, message_assistant);        // Add to array
+
+#else
             cJSON *messages = cJSON_CreateArray();
             cJSON *message_user = cJSON_CreateObject();
-            
-            cJSON_AddStringToObject(message_user, "role", "user");              // Add "role":"user"
-            cJSON_AddStringToObject(message_user, "content", input_buffer);     // Add "content":"ques"
-            cJSON_AddItemToArray(messages, message_user);                       // Add to array for payload
+
+            cJSON_AddStringToObject(message_user, "role", "user");          // Add "role":"user"
+            cJSON_AddStringToObject(message_user, "content", input_buffer); // Add "content":"ques"
+            cJSON_AddItemToArray(messages, message_user);                   // Add to array for payload
 
             handle.get_answer(messages);
 
-            //clear memory
-            cJSON_Delete(messages);
+            // clear memory
+            if (messages)
+            {
+                cJSON_Delete(messages);
+            }
 
-            #endif
-
+#endif
         }
         else
         {
@@ -364,7 +366,10 @@ static int llm2rtt(int argc, char **argv)
 
     handle.argc = argc;
     handle.get_answer = get_llm_answer;
-    handle.messages = cJSON_CreateArray();
+    if (!cJSON_IsArray(handle.messages))
+    {
+        handle.messages = cJSON_CreateArray();
+    }
 
 #if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
