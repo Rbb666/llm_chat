@@ -28,6 +28,7 @@
 static char authHeader[128] = {0};
 static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
+static char *allContent = RT_NULL;
 
 /********************************************************************************
  * @File name: chat_port.c
@@ -42,19 +43,21 @@ static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
  ********************************************************************************/
 char *create_payload(cJSON *messages)
 {
-
     cJSON *requestRoot = cJSON_CreateObject();
     cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
-
+    cJSON *messages_copy = cJSON_Duplicate(messages, 1);
+    char *payload = NULL;
     cJSON_AddItemToObject(requestRoot, "model", model);
-    cJSON_AddItemToObject(requestRoot, "messages", messages);
+    cJSON_AddItemToObject(requestRoot, "messages", messages_copy);
 #ifdef PKG_LLMCHAT_STREAM
     cJSON_AddBoolToObject(requestRoot, "stream", RT_TRUE);
 #else
     cJSON_AddBoolToObject(requestRoot, "stream", RT_FALSE);
 #endif
+    payload = cJSON_PrintUnformatted(requestRoot);
+    cJSON_Delete(requestRoot);
 
-    return cJSON_PrintUnformatted(requestRoot);
+    return payload;
 }
 
 void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle)
@@ -64,7 +67,8 @@ void add_message2messages(const char *input_buffer, char *role, struct llm_obj *
         handle->messages = cJSON_CreateArray();
     }
 
-    cJSON_AddItemToArray(handle->messages, create_message(input_buffer, role)); // Add to array
+    cJSON *message = create_message(input_buffer, role);
+    cJSON_AddItemToArray(handle->messages, message);
 }
 
 cJSON *create_message(const char *input_buffer, char *role)
@@ -85,8 +89,9 @@ void clear_messages(struct llm_obj *handle)
 char *get_llm_answer(cJSON *messages)
 {
     struct webclient_session *webSession = NULL;
-    char *allContent = NULL;
+    char *payload = NULL;
     int bytesRead, responseStatus;
+    allContent[0] = '\0';
 
     // check the messages is array
     if (!cJSON_IsArray(messages))
@@ -104,13 +109,22 @@ char *get_llm_answer(cJSON *messages)
     }
 
     // Create JSON payload
-    char *payload = create_payload(messages);
+    payload = create_payload(messages);
     if (payload == NULL)
     {
         rt_kprintf("Failed to create JSON payload.\n");
         goto cleanup;
     }
 
+#ifdef PKG_LLMCHAT_DBG
+
+    int len = strlen(payload);
+    for (size_t i = 0; i < len; i++)
+    {
+        rt_kprintf("%c", payload[i]);
+    }
+
+#endif
     // Prepare authorization header
     rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", LLM_API_KEY);
 
@@ -143,7 +157,6 @@ char *get_llm_answer(cJSON *messages)
                     inContent = 0;
 
                     // Append content to allContent
-                    char *oldAllContent = allContent;
                     size_t newLen = rt_strlen(contentBuffer);
 
                     // Print content
@@ -153,13 +166,11 @@ char *get_llm_answer(cJSON *messages)
                     }
 
                     // Append content to allContent
-                    if (oldAllContent)
-                    {
-                        strcat(allContent, contentBuffer);
-                    }
 
-                    rt_free(oldAllContent);
-                    contentBuffer[0] = '\0'; // Reset content buffer
+                    strcat(allContent, contentBuffer);
+
+                    // Reset content buffer
+                    contentBuffer[0] = '\0';
                 }
                 else
                 {
@@ -187,5 +198,5 @@ cleanup:
         cJSON_free(payload);
     }
 
-    return allContent;
+    return rt_strdup(allContent);
 }
