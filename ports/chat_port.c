@@ -30,17 +30,11 @@ static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char *allContent = RT_NULL;
 
-/********************************************************************************
- * @File name: chat_port.c
- * @Author: CXSforHPU
- * @Version: 1.1
- * @Date: 2025-2-10
- * @Description: create char for request payload.
- * @messages: your want to send messages:        example
- * {"role": "user", "content": "Hello!"}
- *
+/**
+ * @brief: create char for request payload.
+ * @messages: llm_obj.messages.
  * if you want to modify the request payload, you can modify the following code.
- ********************************************************************************/
+ **/
 char *create_payload(cJSON *messages)
 {
     cJSON *requestRoot = cJSON_CreateObject();
@@ -60,6 +54,12 @@ char *create_payload(cJSON *messages)
     return payload;
 }
 
+/**
+ * @brief: add message to messages
+ * @input_buffer: your input buffer or assistant output buffer.
+ * @role: 'user' or 'assistant'.
+ * @messages: llm_obj.messages.
+ **/
 void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle)
 {
     if (!cJSON_IsArray(handle->messages))
@@ -71,6 +71,15 @@ void add_message2messages(const char *input_buffer, char *role, struct llm_obj *
     cJSON_AddItemToArray(handle->messages, message);
 }
 
+/**
+ * @brief: creat a message
+ * @input_buffer: your input buffer or assistant output buffer.
+ * @role: 'user' or 'assistant'.
+ * @return cJSON* The message object.
+ * such as:
+ * {"role": "user", "content": "Hello!"}
+ * {"role": "assistant", "content": "Hi there! How can I assist you today?"}
+ **/
 cJSON *create_message(const char *input_buffer, char *role)
 {
     cJSON *message = cJSON_CreateObject();
@@ -80,12 +89,44 @@ cJSON *create_message(const char *input_buffer, char *role)
     return message;
 }
 
+/**
+ * @brief: clear messages
+ * @handle: llm_obj.messages.
+ **/
 void clear_messages(struct llm_obj *handle)
 {
     cJSON_Delete(handle->messages);
     handle->messages = cJSON_CreateArray();
 }
 
+/**
+ * @brief Get the answer from a large language model API.
+ *
+ * This function sends a POST request to a large language model API with a JSON payload.
+ *
+ * @param messages llm_obj.messages.
+ *  you need to use 'add_message2messages()' to add messages which you want to send to the model,before using this function.
+ * @return char* The model's answer as a string.
+ * you need to free the memory by using rt_free(),when you don`t use the answer.
+ *
+ * example:
+ #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
+            add_message2messages(input_buffer, "user", &handle);
+
+            char *result = handle.get_answer(handle.messages);
+
+            add_message2messages(result, "assistant", &handle);
+
+#else
+
+            add_message2messages(input_buffer, "user", &handle);
+
+            char *result = handle.get_answer(handle.messages);
+
+            rt_free(result);
+            clear_messages(&handle);
+ *
+ **/
 char *get_llm_answer(cJSON *messages)
 {
     struct webclient_session *webSession = NULL;

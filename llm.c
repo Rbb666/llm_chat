@@ -309,8 +309,9 @@ static void llm_run(void *p)
 
             add_message2messages(input_buffer, "user", &handle);
 
-            handle.get_answer(handle.messages);
-
+            char *result = handle.get_answer(handle.messages);
+            
+            rt_free(result);
             clear_messages(&handle);
 
 #endif
