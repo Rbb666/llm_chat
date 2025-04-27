@@ -35,7 +35,7 @@ static char allContent[WEB_SOCKET_BUF_SIZE] = {0};
  * @messages: llm_obj.messages.
  * if you want to modify the request payload, you can modify the following code.
  **/
-char *create_payload(cJSON *messages)
+rt_weak char *create_payload(cJSON *messages)
 {
     cJSON *requestRoot = cJSON_CreateObject();
     cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
@@ -91,12 +91,54 @@ cJSON *create_message(const char *input_buffer, char *role)
 
 /**
  * @brief: clear messages
- * @handle: llm_obj.messages.
+ * @handle: llm_obj
  **/
 void clear_messages(struct llm_obj *handle)
 {
     cJSON_Delete(handle->messages);
     handle->messages = cJSON_CreateArray();
+}
+
+/**
+ * @brief: init the llm_obj.messages and llm_obj.get_answer
+ * @handle: llm_obj
+ **/
+void init_llm_obj(llm_t handle)
+{ 
+    handle->get_answer = get_llm_answer;
+    if (!cJSON_IsArray(handle->messages))
+    {
+        handle->messages = cJSON_CreateArray();
+    }
+}
+
+/**
+ * @brief: create the llm_t->messages and llm_t->get_answer of llm_t
+ * @return llm_t
+ **/
+llm_t create_llm_t()
+{
+    llm_t handle = (llm_t)rt_malloc(sizeof(struct llm_obj));
+    init_llm_obj(handle);
+
+    return handle;
+}
+
+/**
+ * @brief: delete the llm_t
+ * @return free the memory of llm_t in  the pointer of create_llm_t()
+ **/
+void delete_llm_t(llm_t handle)
+{
+    if (handle != RT_NULL)
+    {           
+        cJSON_Delete(handle->messages);
+        rt_free(handle);
+    }
+    else
+    {
+        rt_kprintf("Error: can`t free llm_t.\n");
+    }
 }
 
 /**
