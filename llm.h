@@ -71,4 +71,7 @@ char *get_llm_answer(cJSON *messages);
 void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle);
 cJSON *create_message(const char *input_buffer, char *role);
 void clear_messages(struct llm_obj *handle);
+void init_llm_obj(llm_t handle);
+llm_t create_llm_t();
+void delete_llm_t(llm_t handle);
 #endif
