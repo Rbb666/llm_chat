@@ -33,6 +33,7 @@ static char allContent[WEB_SOCKET_BUF_SIZE] = {0};
 /**
  * @brief: create char for request payload.
  * @messages: llm_obj.messages.
+ * @return: the  char for request payload.
  * if you want to modify the request payload, you can modify the following code.
  **/
 rt_weak char *create_payload(cJSON *messages)
@@ -63,7 +64,7 @@ rt_weak char *create_payload(cJSON *messages)
 rt_weak void deal_llm_answer(llm_t handle)
 {
     char *answer=RT_NULL;
-    rt_mb_recv(handle->inputbuff_mb, (rt_uint32_t *)&answer,RT_WAITING_FOREVER);
+    rt_mb_recv(handle->outputbuff_mb, (rt_uint32_t *)&answer,RT_WAITING_FOREVER);
     /* you can modify */
     
     int len = rt_strlen(answer);
@@ -125,49 +126,6 @@ void clear_messages(llm_t handle)
     handle->messages = cJSON_CreateArray();
 }
 
-/**
- * @brief: init the llm_t handle->messages ,llm_obj handle->get_answer
- * @handle: llm_t
- **/
-rt_err_t init_llm(llm_t handle)
-{ 
-    handle->get_answer = get_llm_answer;
-    handle->messages = cJSON_CreateArray();
-
-    handle->inputbuff_mb = rt_mailbox_create("llm_inputbuff_mb", sizeof(char *)*LLM_CHAT_NUM);
-    if (handle->inputbuff_mb)
-    {
-        rt_kprintf("can`t create inputbuff_mb");
-    }
-    handle->outputbuff_mb = rt_mailbox_create("llm_outputbuff_mb", sizeof(char *)*LLM_CHAT_NUM);
-    if (handle->outputbuff_mb)
-    {
-        rt_kprintf("can`t create outputbuff_mb");
-    }
-
-#if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
-    rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
-#else
-    rt_uint8_t prio = rt_thread_self()->current_priority + 1;
-#endif
-    
-    rt_err_t result = rt_thread_init(&handle->thread, 
-        "llm_thread",
-        recv_inputBuff_mb,
-        handle,handle->thread_stack[0],
-        sizeof(handle->thread_stack),
-        prio,
-        10);
-    
-    if (result != RT_EOK)
-    {
-        LLM_DBG("The llm interpreter thread create failed.\n");
-        return RT_ERROR;
-    }
-    rt_thread_startup(&handle->thread);
-
-    return RT_EOK;
-}
 
 /**
  * @brief: create the llm_t->messages and llm_t->get_answer of llm_t
@@ -176,19 +134,26 @@ rt_err_t init_llm(llm_t handle)
 llm_t create_llm_t()
 {
     llm_t handle = (llm_t)rt_malloc(sizeof(struct llm_obj));
-    init_llm(handle);
+    rt_err_t result = init_llm(handle);
 
+    if (result != RT_EOK)
+    {
+        LLM_DBG("The llm interpreter thread create failed.\n");
+        return RT_NULL;
+    }
+    
     return handle;
 }
 
 /**
  * @brief: delete the llm_t
- * @return free the memory of llm_t in  the pointer of create_llm_t()
  **/
 void delete_llm_t(llm_t handle)
 {
     if (handle != RT_NULL)
-    {           
+    {
+
+        rt_thread_detach(&handle->thread);
         cJSON_Delete(handle->messages);
         rt_mb_delete(handle->inputbuff_mb);
         rt_mb_delete(handle->outputbuff_mb);
@@ -202,7 +167,6 @@ void delete_llm_t(llm_t handle)
 
 /**
  * @brief: display the llm_t->messages
- * @return free the memory of llm_t in  the pointer of create_llm_t()
  **/
 void display_llm_messages(llm_t handle)
 {
@@ -366,20 +330,17 @@ cleanup:
     return result;
 }
 
-void recv_inputBuff_mb(llm_t handle)
+static void recv_inputBuff_mb(void *handle)
 {
+    llm_t llm = (llm_t)handle;
     char *input_buffer = RT_NULL;
     while (1)
     {
-        rt_mb_recv(handle->inputbuff_mb, (rt_uint32_t *)&input_buffer,RT_WAITING_FOREVER);
-        if (input_buffer[0] == 'q')
-        {
-            break;
-        }
+        rt_mb_recv(llm->inputbuff_mb, (rt_uint32_t *)&input_buffer,RT_WAITING_FOREVER);
 
         /* to show the input */
         int len = rt_strlen(input_buffer);
-        rt_kprintf("LLM :\n");
+        rt_kprintf("USER :\n");
         for(int i = 0; i <= len; i++)
         {
             rt_kprintf("%c",input_buffer[i]);
@@ -388,33 +349,37 @@ void recv_inputBuff_mb(llm_t handle)
 
 
         #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
-        add_message2messages(input_buffer, "user", &handle);
+        add_message2messages(input_buffer, "user", &llm);
 
-        char *result = handle.get_answer(handle.messages);
+        char *result = llm.get_answer(llm.messages);
 
-        add_message2messages(result, "assistant", &handle);
+        add_message2messages(result, "assistant", &llm);
 
 #else
-        add_message2messages(input_buffer, "user", handle);
+        add_message2messages(input_buffer, "user", llm);
 
-        char *result = handle->get_answer(handle->messages);
-        
-        display_llm_messages(handle);
-
-        clear_messages(handle);
+        char *result = llm->get_answer(llm->messages);
+#if defined(LLM_DBG)
+        display_llm_messages(llm);
+#endif
+        clear_messages(llm);
 
 #endif
         
-        rt_mailbox_send(handle->outputbuff_mb, (rt_uint32_t)result);
+        rt_mb_send(llm->outputbuff_mb, (rt_uint32_t)result);
 
-        deal_llm_answer(handle);
+        deal_llm_answer(llm);
         
         rt_free(input_buffer);
     }
 
-    delete_llm_t(handle);
 }
 
+/**
+ * @brief send the inputBuffer to llm_chat
+ * @param handle the  llm_t
+ * @param inputBuffer the inputBuffer
+ */
 void send_llm_mb(llm_t handle, char *inputBuffer)
 {
     char *buffer = (char *)rt_malloc(strlen(inputBuffer) + 1);
@@ -429,3 +394,48 @@ void send_llm_mb(llm_t handle, char *inputBuffer)
     rt_mb_send(handle->inputbuff_mb, (rt_uint32_t)buffer);
 }
 
+/**
+ * @brief: init the llm_t handle->messages ,llm_obj handle->get_answer
+ * @handle: llm_t
+ * @return: rt_err_t
+ **/
+rt_err_t init_llm(llm_t handle)
+{ 
+    handle->get_answer = get_llm_answer;
+    handle->messages = cJSON_CreateArray();
+
+    handle->inputbuff_mb = rt_mb_create("llm_inputbuff_mb", sizeof(char *)*LLM_CHAT_NUM,RT_IPC_FLAG_FIFO);
+    if (handle->inputbuff_mb==RT_NULL)
+    {
+        rt_kprintf("can`t create inputbuff_mb");
+    }
+    handle->outputbuff_mb = rt_mb_create("llm_outputbuff_mb", sizeof(char *)*LLM_CHAT_NUM,RT_IPC_FLAG_FIFO);
+    if (handle->outputbuff_mb==RT_NULL)
+    {
+        rt_kprintf("can`t create outputbuff_mb");
+    }
+
+#if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
+    rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
+#else
+    rt_uint8_t prio = rt_thread_self()->current_priority + 1;
+#endif
+    
+    rt_err_t result = rt_thread_init(&handle->thread, 
+        "llm_thread",
+        recv_inputBuff_mb,
+        (void *)handle,
+        &handle->thread_stack[0],
+        sizeof(handle->thread_stack),
+        prio,
+        10);
+    
+    if (result != RT_EOK)
+    {
+        LLM_DBG("The llm interpreter thread create failed.\n");
+        return RT_ERROR;
+    }
+    rt_thread_startup(&handle->thread);
+
+    return RT_EOK;
+}
