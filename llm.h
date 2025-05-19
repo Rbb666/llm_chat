@@ -82,4 +82,5 @@ rt_err_t init_llm(llm_t handle);
 llm_t create_llm_t();
 void delete_llm_t(llm_t handle);
 void display_llm_messages(llm_t handle);
+void send_llm_mb(llm_t handle, char *inputBuffer);
 #endif
