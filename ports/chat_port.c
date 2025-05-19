@@ -54,13 +54,39 @@ rt_weak char *create_payload(cJSON *messages)
     return payload;
 }
 
+
+/**
+ * @brief: deal the answer of the llm
+ * @handle: llm_t
+ * if you want to modify the dealing, you can modify the following code.
+ **/
+rt_weak void deal_llm_answer(llm_t handle)
+{
+    char *answer=RT_NULL;
+    rt_mb_recv(handle->inputbuff_mb, (rt_uint32_t *)&answer,RT_WAITING_FOREVER);
+    /* you can modify */
+    
+    int len = rt_strlen(answer);
+    rt_kprintf("LLM :\n");
+    for(int i = 0; i <= len; i++)
+    {
+        rt_kprintf("%c",answer[i]);
+    }
+    rt_kprintf("\n");
+
+    /* end */
+    rt_free(answer);
+
+}
+
+
 /**
  * @brief: add message to messages
  * @input_buffer: your input buffer or assistant output buffer.
  * @role: 'user' or 'assistant'.
- * @messages: llm_obj.messages.
+ * @handle: llm_t.
  **/
-void add_message2messages(const char *input_buffer, char *role, struct llm_obj *handle)
+void add_message2messages(const char *input_buffer, char *role,llm_t handle)
 {
     if (!cJSON_IsArray(handle->messages))
     {
@@ -93,23 +119,54 @@ cJSON *create_message(const char *input_buffer, char *role)
  * @brief: clear messages
  * @handle: llm_obj
  **/
-void clear_messages(struct llm_obj *handle)
+void clear_messages(llm_t handle)
 {
     cJSON_Delete(handle->messages);
     handle->messages = cJSON_CreateArray();
 }
 
 /**
- * @brief: init the llm_obj.messages and llm_obj.get_answer
- * @handle: llm_obj
+ * @brief: init the llm_t handle->messages ,llm_obj handle->get_answer
+ * @handle: llm_t
  **/
-void init_llm_obj(llm_t handle)
+rt_err_t init_llm(llm_t handle)
 { 
     handle->get_answer = get_llm_answer;
-    if (!cJSON_IsArray(handle->messages))
+    handle->messages = cJSON_CreateArray();
+
+    handle->inputbuff_mb = rt_mailbox_create("llm_inputbuff_mb", sizeof(char *)*LLM_CHAT_NUM);
+    if (handle->inputbuff_mb)
     {
-        handle->messages = cJSON_CreateArray();
+        rt_kprintf("can`t create inputbuff_mb");
     }
+    handle->outputbuff_mb = rt_mailbox_create("llm_outputbuff_mb", sizeof(char *)*LLM_CHAT_NUM);
+    if (handle->outputbuff_mb)
+    {
+        rt_kprintf("can`t create outputbuff_mb");
+    }
+
+#if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
+    rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
+#else
+    rt_uint8_t prio = rt_thread_self()->current_priority + 1;
+#endif
+    
+    rt_err_t result = rt_thread_init(&handle->thread, 
+        "llm_thread",
+        recv_inputBuff_mb,
+        handle,handle->thread_stack[0],
+        sizeof(handle->thread_stack),
+        prio,
+        10);
+    
+    if (result != RT_EOK)
+    {
+        LLM_DBG("The llm interpreter thread create failed.\n");
+        return RT_ERROR;
+    }
+    rt_thread_startup(&handle->thread);
+
+    return RT_EOK;
 }
 
 /**
@@ -119,7 +176,7 @@ void init_llm_obj(llm_t handle)
 llm_t create_llm_t()
 {
     llm_t handle = (llm_t)rt_malloc(sizeof(struct llm_obj));
-    init_llm_obj(handle);
+    init_llm(handle);
 
     return handle;
 }
@@ -133,6 +190,8 @@ void delete_llm_t(llm_t handle)
     if (handle != RT_NULL)
     {           
         cJSON_Delete(handle->messages);
+        rt_mb_delete(handle->inputbuff_mb);
+        rt_mb_delete(handle->outputbuff_mb);
         rt_free(handle);
     }
     else
@@ -140,6 +199,23 @@ void delete_llm_t(llm_t handle)
         rt_kprintf("Error: can`t free llm_t.\n");
     }
 }
+
+/**
+ * @brief: display the llm_t->messages
+ * @return free the memory of llm_t in  the pointer of create_llm_t()
+ **/
+void display_llm_messages(llm_t handle)
+{
+    char *jsonString = cJSON_PrintUnformatted(handle->messages);
+    int len = strlen(jsonString);
+    for (int i = 0; i < len; i++)
+    {
+        rt_kprintf("%c", jsonString[i]);
+    }
+
+    cJSON_free(jsonString);
+}
+
 
 /**
  * @brief Get the answer from a large language model API.
@@ -289,3 +365,67 @@ cleanup:
     }
     return result;
 }
+
+void recv_inputBuff_mb(llm_t handle)
+{
+    char *input_buffer = RT_NULL;
+    while (1)
+    {
+        rt_mb_recv(handle->inputbuff_mb, (rt_uint32_t *)&input_buffer,RT_WAITING_FOREVER);
+        if (input_buffer[0] == 'q')
+        {
+            break;
+        }
+
+        /* to show the input */
+        int len = rt_strlen(input_buffer);
+        rt_kprintf("LLM :\n");
+        for(int i = 0; i <= len; i++)
+        {
+            rt_kprintf("%c",input_buffer[i]);
+        }
+        rt_kprintf("\n");
+
+
+        #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
+        add_message2messages(input_buffer, "user", &handle);
+
+        char *result = handle.get_answer(handle.messages);
+
+        add_message2messages(result, "assistant", &handle);
+
+#else
+        add_message2messages(input_buffer, "user", handle);
+
+        char *result = handle->get_answer(handle->messages);
+        
+        display_llm_messages(handle);
+
+        clear_messages(handle);
+
+#endif
+        
+        rt_mailbox_send(handle->outputbuff_mb, (rt_uint32_t)result);
+
+        deal_llm_answer(handle);
+        
+        rt_free(input_buffer);
+    }
+
+    delete_llm_t(handle);
+}
+
+void send_llm_mb(llm_t handle, char *inputBuffer)
+{
+    char *buffer = (char *)rt_malloc(strlen(inputBuffer) + 1);
+    if (buffer == RT_NULL) {
+        rt_kprintf("Failed to allocate memory for input buffer\n");
+        return;
+    }
+
+    rt_memset(buffer, 0, strlen(inputBuffer) + 1);
+    rt_strncpy(buffer, inputBuffer, strlen(inputBuffer));
+
+    rt_mb_send(handle->inputbuff_mb, (rt_uint32_t)buffer);
+}
+
