@@ -28,7 +28,7 @@
 static char authHeader[128] = {0};
 static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
-static char *allContent = RT_NULL;
+static char allContent[WEB_SOCKET_BUF_SIZE] = {0};
 
 /**
  * @brief: create char for request payload.
@@ -129,9 +129,11 @@ void clear_messages(struct llm_obj *handle)
  **/
 char *get_llm_answer(cJSON *messages)
 {
-    struct webclient_session *webSession = NULL;
-    char *payload = NULL;
+    struct webclient_session *webSession = RT_NULL;
+    char *payload = RT_NULL;
+    char *result = RT_NULL;
     int bytesRead, responseStatus;
+
     allContent[0] = '\0';
 
     // check the messages is array
@@ -239,5 +241,9 @@ cleanup:
         cJSON_free(payload);
     }
 
-    return rt_strdup(allContent);
+    if (allContent[0] != '\0')
+    {
+        result = rt_strdup(allContent);
+    }
+    return result;
 }
