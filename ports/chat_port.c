@@ -129,9 +129,20 @@ void clear_messages(struct llm_obj *handle)
  **/
 char *get_llm_answer(cJSON *messages)
 {
-    struct webclient_session *webSession = NULL;
-    char *payload = NULL;
+    struct webclient_session *webSession = RT_NULL;
+    char *payload = RT_NULL;
+    char *result = RT_NULL;
     int bytesRead, responseStatus;
+
+    if (allContent == RT_NULL)
+    {
+        allContent = (char *)rt_calloc(1, WEB_SOCKET_BUF_SIZE * 4);
+        if (allContent == RT_NULL)
+        {
+            rt_kprintf("Failed to allocate memory for allContent.\n");
+            goto cleanup;
+        }
+    }
     allContent[0] = '\0';
 
     // check the messages is array
@@ -239,5 +250,11 @@ cleanup:
         cJSON_free(payload);
     }
 
-    return rt_strdup(allContent);
+    if (allContent)
+    {
+        result = rt_strdup(allContent);
+        rt_free(allContent);
+        allContent = RT_NULL;
+    }
+    return result;
 }
