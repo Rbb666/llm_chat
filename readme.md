@@ -123,7 +123,7 @@ void destroy_llm_t(llm_t handle);
 
 |   参数    |   描述    |   备注    |
 |:------:|:---------:|:-------:|
-|   无    |   返回一个指针指向已经创建好的llm_obj    |  需要传入由llm_t create_llm()创建的llm_t    |
+|   handle    |   销毁并释放内存    |  需要传入由llm_t create_llm()创建的llm_t    |
 
 ### 发送信息与处理信息
 
