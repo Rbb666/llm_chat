@@ -148,7 +148,6 @@ void delete_llm_t(llm_t handle)
 {
     if (handle != RT_NULL)
     {
-
         rt_thread_detach(&handle->thread);
         cJSON_Delete(handle->messages);
         rt_mb_delete(handle->inputbuff_mb);

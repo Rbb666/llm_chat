@@ -1,12 +1,16 @@
 from building import *
 
 cwd = GetCurrentDir()
-path = [cwd]
-src = Glob('*.c')
 
+path = [cwd]
 path += [cwd + '/ports']
-src += Glob('ports/chat_port.c')
-src += Glob('demo/llm_contory.c')
+src = []
+
+src += ['ports/chat_port.c']
+src +=['llm.c']
+
+if GetDepend(['PKG_USING_LLMCHAT_DEMO']):
+    src += ['demo/llm_contory.c']
 
 group = DefineGroup('llm', src, depend = ['PKG_USING_LLMCHAT'], CPPPATH = path)
 
