@@ -59,6 +59,7 @@ static void send(int argc, char *argv[])
     if (llm_handle == RT_NULL)
     {
         rt_kprintf("llm_handle is null\n");
+        return；
     }
 
     rt_snprintf(prompt, sizeof(prompt), LED_PROMPT, argv[1]);
