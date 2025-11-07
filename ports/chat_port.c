@@ -14,15 +14,19 @@
 #include "webclient.h"
 #include <cJSON.h>
 
-#define LLM_API_KEY PKG_LLM_API_KEY
-#if defined(PKG_LLM_QWEN_API_URL)
-#define LLM_API_URL PKG_LLM_QWEN_API_URL
-#elif defined(PKG_LLM_DOUBAO_API_URL)
-#define LLM_API_URL PKG_LLM_DOUBAO_API_URL
-#elif defined(PKG_LLM_DEEPSEEK_API_URL)
-#define LLM_API_URL PKG_LLM_DEEPSEEK_API_URL
-#endif
-#define LLM_MODEL_NAME PKG_LLM_MODEL_NAME
+/* Dynamic configuration support */
+extern struct {
+    char api_key[128];
+    char model_name[128];
+    char api_url[128];
+    rt_bool_t is_configured;
+} llm_config;
+
+/* Macros for getting dynamic configuration */
+#define GET_DYNAMIC_API_KEY()     (llm_config.is_configured ? llm_config.api_key : PKG_LLM_API_KEY)
+#define GET_DYNAMIC_MODEL_NAME()  (llm_config.is_configured ? llm_config.model_name : PKG_LLM_MODEL_NAME)
+#define GET_DYNAMIC_API_URL()     (llm_config.is_configured ? llm_config.api_url : PKG_LLM_QWEN_API_URL)
+
 #define WEB_SOCKET_BUF_SIZE PKG_WEB_SORKET_BUFSZ
 
 static char authHeader[128] = {0};
@@ -36,10 +40,16 @@ static char allContent[WEB_SOCKET_BUF_SIZE] = {0};
  * @return: the  char for request payload.
  * if you want to modify the request payload, you can modify the following code.
  **/
+/** Create request payload for LLM API
+ *  @messages: llm_obj.messages
+ *  @return: the char for request payload
+ *  if you want to modify the request payload, you can modify the following code
+ */
 rt_weak char *create_payload(cJSON *messages)
 {
     cJSON *requestRoot = cJSON_CreateObject();
-    cJSON *model = cJSON_CreateString(LLM_MODEL_NAME);
+    /* Use dynamically configured model name */
+    cJSON *model = cJSON_CreateString(GET_DYNAMIC_MODEL_NAME());
     cJSON *messages_copy = cJSON_Duplicate(messages, 1);
     char *payload = NULL;
     cJSON_AddItemToObject(requestRoot, "model", model);
@@ -64,7 +74,7 @@ rt_weak void deal_llm_answer(llm_t handle)
 {
     char *answer = RT_NULL;
     rt_mb_recv(handle->outputbuff_mb, (rt_uint32_t *)&answer, RT_WAITING_FOREVER);
-    /* you can modify */
+    /* You can modify this section */
 
     int len = rt_strlen(answer);
     rt_kprintf("LLM :\n");
@@ -74,7 +84,7 @@ rt_weak void deal_llm_answer(llm_t handle)
     }
     rt_kprintf("\n");
 
-    /* end */
+    /* End of modifiable section */
     rt_free(answer);
 }
 
@@ -212,14 +222,14 @@ char *get_llm_answer(cJSON *messages)
 
     allContent[0] = '\0';
 
-    // check the messages is array
+    /* Check if messages is an array */
     if (!cJSON_IsArray(messages))
     {
         rt_kprintf("Error: messages must be a cJSON array.\n");
         goto cleanup;
     }
 
-    // Create web session
+    /* Create web session */
     webSession = webclient_session_create(WEB_SOCKET_BUF_SIZE);
     if (webSession == NULL)
     {
@@ -227,7 +237,7 @@ char *get_llm_answer(cJSON *messages)
         goto cleanup;
     }
 
-    // Create JSON payload
+    /* Create JSON payload */
     payload = create_payload(messages);
     if (payload == NULL)
     {
@@ -244,26 +254,30 @@ char *get_llm_answer(cJSON *messages)
     }
 
 #endif
-    // Prepare authorization header
-    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", LLM_API_KEY);
+    /* Prepare authorization header - use dynamic configuration */
+    const char *current_api_key = GET_DYNAMIC_API_KEY();
+    const char *current_api_url = GET_DYNAMIC_API_URL();
 
-    // Add headers
+    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", current_api_key);
+
+    /* Add headers */
     webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
     webclient_header_fields_add(webSession, authHeader);
     webclient_header_fields_add(webSession, "Content-Length: %d\r\n", rt_strlen(payload));
 
     LLM_DBG("HTTP Header: %s\n", webSession->header->buffer);
     LLM_DBG("HTTP Payload: %s\n", payload);
+    LLM_DBG("Using API URL: %s\n", current_api_url);
 
-    // Send POST request
-    responseStatus = webclient_post(webSession, LLM_API_URL, payload, rt_strlen(payload));
+    /* Send POST request - use dynamic configuration */
+    responseStatus = webclient_post(webSession, current_api_url, payload, rt_strlen(payload));
     if (responseStatus != 200)
     {
         rt_kprintf("Webclient POST request failed, response status: %d\n", responseStatus);
         goto cleanup;
     }
 
-    // Read and process response
+    /* Read and process response */
     while ((bytesRead = webclient_read(webSession, responseBuffer, WEB_SOCKET_BUF_SIZE)) > 0)
     {
         int inContent = 0;
@@ -275,20 +289,20 @@ char *get_llm_answer(cJSON *messages)
                 {
                     inContent = 0;
 
-                    // Append content to allContent
+                    /* Append content to allContent */
                     size_t newLen = rt_strlen(contentBuffer);
 
-                    // Print content
+                    /* Print content */
                     for (size_t i = 0; i < newLen; i++)
                     {
                         rt_kprintf("%c", contentBuffer[i]);
                     }
 
-                    // Append content to allContent
+                    /* Append content to allContent */
 
                     strcat(allContent, contentBuffer);
 
-                    // Reset content buffer
+                    /* Reset content buffer */
                     contentBuffer[0] = '\0';
                 }
                 else
@@ -307,7 +321,7 @@ char *get_llm_answer(cJSON *messages)
     rt_kprintf("\n");
 
 cleanup:
-    // Cleanup resources
+    /* Cleanup resources */
     if (webSession)
     {
         webclient_close(webSession);
@@ -332,7 +346,7 @@ static void recv_inputBuff_mb(void *handle)
     {
         rt_mb_recv(llm->inputbuff_mb, (rt_uint32_t *)&input_buffer, RT_WAITING_FOREVER);
 
-        /* to show the input */
+        /* Show the input */
         int len = rt_strlen(input_buffer);
         rt_kprintf("USER :\n");
         for (int i = 0; i <= len; i++)
