@@ -2229,44 +2229,58 @@
                         return;
                     }
                     const chatUrl = new URL('/cgi-bin/chat', location.origin).toString();
-                    // 首次尝试：JSON 请求
-                    let resp = await fetch(chatUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: message })
-                    });
-
-                    // 优先以 JSON 解析；失败则以文本解析
-                    let text = await resp.text();
+                    const payload = { message: message };
+                    const supportsStream = true;
+                    let useStream = supportsStream;
+                    let resp;
                     let data;
-                    try { data = JSON.parse(text); } catch (_) { data = null; }
 
-                    // 如果非 OK 或解析不到 JSON，尝试 x-www-form-urlencoded 兜底
-                    if (!resp.ok || !data) {
-                        try {
-                            resp = await fetch(chatUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                                body: 'message=' + encodeURIComponent(message)
-                            });
-                            text = await resp.text();
-                            try { data = JSON.parse(text); } catch (_) {
-                                data = { success: false, error: text || '服务器返回非JSON' };
-                            }
-                        } catch (e2) {
-                            data = { success: false, error: '网络错误，请检查服务器连接' };
-                        }
+                    if (useStream) {
+                        payload.stream = true;
                     }
 
-                    removeTypingIndicator();
-                    if (data && data.success) {
-                        addMessage(data.response, false);
+                    resp = await fetch(chatUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (useStream && resp.ok) {
+                        const streamResult = await handleStreamedResponse(resp);
+                        if (streamResult && streamResult.success) {
+                            data = streamResult;
+                        }
+                        else {
+                            data = streamResult || { success: false, error: 'LLM响应失败' };
+                        }
+                    }
+                    else {
+                        removeTypingIndicator();
+                        data = await handleLegacyResponse(resp, message, chatUrl);
+                    }
+
+                    if (useStream && data && data.success) {
                         // 将最后一条AI消息标记上一条用户输入，便于重新生成
                         const lastMsg = chatContainer.lastElementChild;
                         if (lastMsg && lastMsg.classList && lastMsg.classList.contains('message')) {
                             lastMsg.setAttribute('data-prev-user', window.__lastUserMessage || '');
                         }
-                    } else {
+                    }
+                    else if (!useStream) {
+                        if (data && data.success) {
+                            addMessage(data.response, false);
+                            const lastMsg = chatContainer.lastElementChild;
+                            if (lastMsg && lastMsg.classList && lastMsg.classList.contains('message')) {
+                                lastMsg.setAttribute('data-prev-user', window.__lastUserMessage || '');
+                            }
+                        } else {
+                            addMessage(`错误: ${data && data.error ? data.error : '未知错误'}`, false, true);
+                        }
+                    }
+
+                    if (data && data.success) {
+                        // 已经在各自的处理流程中完成渲染
+                    } else if (useStream) {
                         addMessage(`错误: ${data && data.error ? data.error : '未知错误'}`, false, true);
                     }
                 } catch (error) {
@@ -2452,6 +2466,226 @@
 
                 chatContainer.appendChild(messageDiv);
                 chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            function createStreamingMessageShell() {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message ai-message streaming';
+
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'message-avatar ai-avatar';
+                avatarDiv.innerHTML = '<i class="fas fa-robot"></i>';
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.textContent = '';
+
+                messageDiv.appendChild(avatarDiv);
+                messageDiv.appendChild(contentDiv);
+                chatContainer.appendChild(messageDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+                return { messageDiv, contentDiv, rawText: '' };
+            }
+
+            function updateStreamingMessageShell(state, text) {
+                if (!state || !state.contentDiv) return;
+                state.rawText = text;
+                state.contentDiv.textContent = text;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            function finalizeStreamingMessageShell(state, finalText, isError = false, errorTip = '') {
+                if (!state || !state.messageDiv) return;
+                const messageDiv = state.messageDiv;
+                const contentDiv = state.contentDiv;
+
+                if (isError) {
+                    const errorMessage = errorTip || 'LLM响应失败';
+                    contentDiv.innerHTML = `<div class="error-message">${errorMessage}</div>`;
+                    conversationManager.addMessageToCurrent(errorMessage, false, true);
+                    renderConversationList();
+                    messageDiv.setAttribute('data-prev-user', window.__lastUserMessage || '');
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    return;
+                }
+
+                const text = (finalText || state.rawText || '').toString();
+                state.rawText = text;
+
+                contentDiv.innerHTML = parseMarkdown(text);
+                try {
+                    if (window.hljs) {
+                        contentDiv.querySelectorAll('pre code').forEach(function(block){
+                            hljs.highlightElement(block);
+                        });
+                    }
+                } catch (e) {}
+                enhanceCodeBlocks(contentDiv);
+
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'message-actions';
+
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'icon-btn';
+                copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                copyBtn.title = '复制';
+                copyBtn.addEventListener('click', async function() {
+                    const htmlEl = contentDiv.querySelector('.markdown-body');
+                    let textToCopy = text;
+                    if (htmlEl) textToCopy = htmlEl.innerText || htmlEl.textContent || text;
+                    const ok = await copyText(textToCopy);
+                    copyBtn.innerHTML = ok ? '<i class="fas fa-check"></i>' : '<i class="fas fa-times"></i>';
+                    copyBtn.style.color = ok ? '#10a37f' : '#ef4444';
+                    setTimeout(function(){
+                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                        copyBtn.style.color = '';
+                    }, 1500);
+                });
+
+                const regenBtn = document.createElement('button');
+                regenBtn.className = 'icon-btn';
+                regenBtn.innerHTML = '<i class="fas fa-rotate-right"></i>';
+                regenBtn.title = '重新生成';
+                regenBtn.addEventListener('click', function() {
+                    const prevUser = messageDiv.getAttribute('data-prev-user');
+                    const prompt = (prevUser && prevUser.trim()) ? prevUser.trim() : (window.__lastUserMessage || '');
+                    if (!prompt) return;
+                    messageInput.value = prompt;
+                    messageInput.dispatchEvent(new Event('input'));
+                    sendMessage();
+                });
+
+                actionsDiv.appendChild(copyBtn);
+                actionsDiv.appendChild(regenBtn);
+                messageDiv.appendChild(actionsDiv);
+
+                conversationManager.addMessageToCurrent(text, false, false);
+                renderConversationList();
+
+                messageDiv.classList.remove('streaming');
+                messageDiv.setAttribute('data-prev-user', window.__lastUserMessage || '');
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            async function handleStreamedResponse(response) {
+                removeTypingIndicator();
+
+                if (!response.body || typeof response.body.getReader !== 'function') {
+                    finalizeStreamingMessageShell(createStreamingMessageShell(), '', true, '浏览器不支持流式响应');
+                    return { success: false, error: '浏览器不支持流式响应' };
+                }
+
+                const state = createStreamingMessageShell();
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let aggregatedText = '';
+                let finalText = '';
+
+                try {
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop() || '';
+
+                        let shouldStop = false;
+
+                        for (const part of parts) {
+                            if (!part.trim() || part.trim().startsWith(':')) {
+                                continue;
+                            }
+
+                            const lines = part.split('\n');
+                            let eventType = 'message';
+                            const dataLines = [];
+
+                            lines.forEach(function(line) {
+                                if (line.startsWith('event:')) {
+                                    eventType = line.slice(6).trim();
+                                }
+                                else if (line.startsWith('data:')) {
+                                    dataLines.push(line.slice(5));
+                                }
+                            });
+
+                            const payload = dataLines.join('\n');
+
+                            if (eventType === 'delta') {
+                                aggregatedText += payload;
+                                updateStreamingMessageShell(state, aggregatedText);
+                            }
+                            else if (eventType === 'final') {
+                                finalText = payload || aggregatedText;
+                            }
+                            else if (eventType === 'error') {
+                                finalizeStreamingMessageShell(state, '', true, payload || 'LLM响应失败');
+                                return { success: false, error: payload || 'LLM响应失败' };
+                            }
+                            else if (eventType === 'done') {
+                                shouldStop = true;
+                                break;
+                            }
+                        }
+
+                        if (shouldStop) {
+                            break;
+                        }
+                    }
+                }
+                catch (err) {
+                    finalizeStreamingMessageShell(state, '', true, err && err.message ? err.message : '网络错误');
+                    return { success: false, error: err && err.message ? err.message : '网络错误' };
+                }
+                finally {
+                    try { reader.releaseLock(); } catch (e) {}
+                }
+
+                if (!finalText) {
+                    finalText = aggregatedText;
+                }
+
+                finalizeStreamingMessageShell(state, finalText || '');
+                return { success: true, response: finalText || aggregatedText };
+            }
+
+            async function handleLegacyResponse(initialResponse, message, chatUrl) {
+                removeTypingIndicator();
+                let resp = initialResponse;
+                let text = await resp.text();
+                let data = null;
+
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = null;
+                }
+
+                if (!resp.ok || !data) {
+                    try {
+                        resp = await fetch(chatUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                            body: 'message=' + encodeURIComponent(message)
+                        });
+                        text = await resp.text();
+                        try {
+                            data = JSON.parse(text);
+                        } catch (parseErr) {
+                            data = { success: false, error: text || '服务器返回非JSON' };
+                        }
+                    } catch (netErr) {
+                        data = { success: false, error: '网络错误，请检查服务器连接' };
+                    }
+                }
+
+                if (!data) {
+                    data = { success: false, error: '未知响应' };
+                }
+
+                return data;
             }
 
             // 添加消息到聊天界面（新消息发送时使用）

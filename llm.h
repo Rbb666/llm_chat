@@ -41,6 +41,8 @@ enum llm_input_stat
     LLM_WAIT_FUNC_KEY,
 };
 
+typedef void (*llm_stream_callback_t)(const char *chunk, void *user_data);
+
 struct llm_obj
 {
     /*  thread  */
@@ -66,15 +68,19 @@ struct llm_obj
 
     /*  messages */
     cJSON *messages;
-    char *(*get_answer)(cJSON *messages);
+    char *(*get_answer)(struct llm_obj *handle, cJSON *messages);
     void *(*send_llm_mb)(char*  input_buffer);
     rt_mailbox_t inputbuff_mb;
 
     rt_mailbox_t outputbuff_mb;
+
+    /* optional streaming callback */
+    llm_stream_callback_t stream_cb;
+    void *stream_user_data;
 };
 typedef struct llm_obj *llm_t;
 
-char *get_llm_answer(cJSON *messages);
+char *get_llm_answer(llm_t handle, cJSON *messages);
 void add_message2messages(const char *input_buffer, char *role,llm_t handle);
 cJSON *create_message(const char *input_buffer, char *role);
 void clear_messages(llm_t handle);

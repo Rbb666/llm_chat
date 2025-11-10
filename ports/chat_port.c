@@ -50,7 +50,67 @@ static const char *get_dynamic_api_url(void)
 static char authHeader[128] = {0};
 static char responseBuffer[WEB_SOCKET_BUF_SIZE] = {0};
 static char contentBuffer[WEB_SOCKET_BUF_SIZE] = {0};
-static char allContent[WEB_SOCKET_BUF_SIZE] = {0};
+
+static rt_bool_t append_chunk_to_buffer(char **buffer,
+                                        size_t *length,
+                                        size_t *capacity,
+                                        const char *chunk)
+{
+    size_t chunk_len;
+
+    if (buffer == RT_NULL || length == RT_NULL || capacity == RT_NULL || chunk == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+
+    chunk_len = rt_strlen(chunk);
+    if (chunk_len == 0)
+    {
+        return RT_TRUE;
+    }
+
+    if (*capacity < (*length + chunk_len + 1))
+    {
+        size_t new_capacity = (*capacity == 0) ? WEB_SOCKET_BUF_SIZE : *capacity;
+
+        while (new_capacity < (*length + chunk_len + 1))
+        {
+            size_t proposed = new_capacity << 1;
+            if (proposed <= new_capacity)
+            {
+                new_capacity = (*length + chunk_len + 1);
+                break;
+            }
+            new_capacity = proposed;
+        }
+
+        if (*buffer == RT_NULL)
+        {
+            *buffer = (char *)rt_malloc(new_capacity);
+            if (*buffer == RT_NULL)
+            {
+                return RT_FALSE;
+            }
+            (*buffer)[0] = '\0';
+        }
+        else
+        {
+            char *new_buf = (char *)rt_realloc(*buffer, new_capacity);
+            if (new_buf == RT_NULL)
+            {
+                return RT_FALSE;
+            }
+            *buffer = new_buf;
+        }
+
+        *capacity = new_capacity;
+    }
+
+    rt_memcpy(*buffer + *length, chunk, chunk_len);
+    *length += chunk_len;
+    (*buffer)[*length] = '\0';
+    return RT_TRUE;
+}
 
 /**
  * @brief: create char for request payload.
@@ -158,6 +218,14 @@ void clear_messages(llm_t handle)
 llm_t create_llm_t()
 {
     llm_t handle = (llm_t)rt_malloc(sizeof(struct llm_obj));
+    if (handle == RT_NULL)
+    {
+        rt_kprintf("Failed to allocate llm handle.\n");
+        return RT_NULL;
+    }
+
+    rt_memset(handle, 0x00, sizeof(struct llm_obj));
+
     rt_err_t result = init_llm(handle);
 
     if (result != RT_EOK)
@@ -217,7 +285,7 @@ void display_llm_messages(llm_t handle)
  #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
             add_message2messages(input_buffer, "user", &handle);
 
-            char *result = handle.get_answer(handle.messages);
+            char *result = handle.get_answer(&handle, handle.messages);
 
             add_message2messages(result, "assistant", &handle);
 
@@ -225,20 +293,33 @@ void display_llm_messages(llm_t handle)
 
             add_message2messages(input_buffer, "user", &handle);
 
-            char *result = handle.get_answer(handle.messages);
+            char *result = handle.get_answer(&handle, handle.messages);
 
             rt_free(result);
             clear_messages(&handle);
  *
  **/
-char *get_llm_answer(cJSON *messages)
+char *get_llm_answer(llm_t handle, cJSON *messages)
 {
     struct webclient_session *webSession = RT_NULL;
     char *payload = RT_NULL;
     char *result = RT_NULL;
+    char *assembled = RT_NULL;
+    size_t assembled_len = 0;
+    size_t assembled_cap = 0;
     int bytesRead, responseStatus;
+    int inContent = 0;
+    size_t current_chunk_len = 0;
+    llm_stream_callback_t stream_cb = RT_NULL;
+    void *stream_context = RT_NULL;
 
-    allContent[0] = '\0';
+    if (handle == RT_NULL)
+    {
+        rt_kprintf("Error: llm handle is NULL.\n");
+        return RT_NULL;
+    }
+
+    contentBuffer[0] = '\0';
 
     /* Check if messages is an array */
     if (!cJSON_IsArray(messages))
@@ -246,6 +327,9 @@ char *get_llm_answer(cJSON *messages)
         rt_kprintf("Error: messages must be a cJSON array.\n");
         goto cleanup;
     }
+
+    stream_cb = handle->stream_cb;
+    stream_context = handle->stream_user_data;
 
     /* Create web session */
     webSession = webclient_session_create(WEB_SOCKET_BUF_SIZE);
@@ -298,45 +382,61 @@ char *get_llm_answer(cJSON *messages)
     /* Read and process response */
     while ((bytesRead = webclient_read(webSession, responseBuffer, WEB_SOCKET_BUF_SIZE)) > 0)
     {
-        int inContent = 0;
         for (int i = 0; i < bytesRead; i++)
         {
+            char ch = responseBuffer[i];
+
             if (inContent)
             {
-                if (responseBuffer[i] == '"')
+                if (ch == '"')
                 {
                     inContent = 0;
 
-                    /* Append content to allContent */
-                    size_t newLen = rt_strlen(contentBuffer);
-
-                    /* Print content */
-                    for (size_t i = 0; i < newLen; i++)
+                    if (current_chunk_len > 0)
                     {
-                        rt_kprintf("%c", contentBuffer[i]);
+                        for (size_t j = 0; j < current_chunk_len; j++)
+                        {
+                            rt_kprintf("%c", contentBuffer[j]);
+                        }
+
+                        if (!append_chunk_to_buffer(&assembled, &assembled_len, &assembled_cap, contentBuffer))
+                        {
+                            rt_kprintf("Error: insufficient memory for LLM response.\n");
+                            goto cleanup;
+                        }
+
+                        if (stream_cb)
+                        {
+                            stream_cb(contentBuffer, stream_context);
+                        }
                     }
 
-                    /* Append content to allContent */
-
-                    strcat(allContent, contentBuffer);
-
-                    /* Reset content buffer */
+                    current_chunk_len = 0;
                     contentBuffer[0] = '\0';
                 }
                 else
                 {
-                    strncat(contentBuffer, &responseBuffer[i], 1);
+                    if (current_chunk_len < (sizeof(contentBuffer) - 1))
+                    {
+                        contentBuffer[current_chunk_len++] = ch;
+                        contentBuffer[current_chunk_len] = '\0';
+                    }
                 }
             }
-            else if (responseBuffer[i] == '"' && i > 8 &&
+            else if (ch == '"' && i >= 10 &&
                      rt_strncmp(&responseBuffer[i - 10], "\"content\":\"", 10) == 0)
             {
                 inContent = 1;
+                current_chunk_len = 0;
+                contentBuffer[0] = '\0';
             }
         }
     }
 
-    rt_kprintf("\n");
+    if (assembled_len > 0)
+    {
+        rt_kprintf("\n");
+    }
 
 cleanup:
     /* Cleanup resources */
@@ -349,9 +449,15 @@ cleanup:
         cJSON_free(payload);
     }
 
-    if (allContent[0] != '\0')
+    if (assembled_len > 0 && assembled != RT_NULL)
     {
-        result = rt_strdup(allContent);
+        result = assembled;
+        assembled = RT_NULL;
+    }
+
+    if (assembled != RT_NULL)
+    {
+        rt_free(assembled);
     }
     return result;
 }
@@ -373,17 +479,18 @@ static void recv_inputBuff_mb(void *handle)
         }
         rt_kprintf("\n");
 
+        char *result = RT_NULL;
 #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
-        add_message2messages(input_buffer, "user", &llm);
+        add_message2messages(input_buffer, "user", llm);
 
-        char *result = llm.get_answer(llm.messages);
+        result = llm->get_answer(llm, llm->messages);
 
-        add_message2messages(result, "assistant", &llm);
+        add_message2messages(result, "assistant", llm);
 
 #else
         add_message2messages(input_buffer, "user", llm);
 
-        char *result = llm->get_answer(llm->messages);
+        result = llm->get_answer(llm, llm->messages);
 #if defined(LLM_DBG)
         display_llm_messages(llm);
 #endif
@@ -426,8 +533,15 @@ void send_llm_mb(llm_t handle, char *inputBuffer)
  **/
 rt_err_t init_llm(llm_t handle)
 {
+    if (handle == RT_NULL)
+    {
+        return RT_ERROR;
+    }
+
     handle->get_answer = get_llm_answer;
     handle->messages = cJSON_CreateArray();
+    handle->stream_cb = RT_NULL;
+    handle->stream_user_data = RT_NULL;
 
     handle->inputbuff_mb = rt_mb_create("llm_inputbuff_mb", sizeof(char *) * LLM_CHAT_NUM, RT_IPC_FLAG_FIFO);
     if (handle->inputbuff_mb == RT_NULL)

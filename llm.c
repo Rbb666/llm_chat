@@ -300,19 +300,19 @@ static void llm_run(void *p)
         {
 #ifdef PKG_LLMCHAT_HISTORY_PAYLOAD
             add_message2messages(input_buffer, "user", &handle);
-
-            char *result = handle.get_answer(handle.messages);
-
-            add_message2messages(result, "assistant", &handle);
+            {
+                char *result = handle.get_answer(&handle, handle.messages);
+                add_message2messages(result, "assistant", &handle);
+            }
 
 #else
 
             add_message2messages(input_buffer, "user", &handle);
-
-            char *result = handle.get_answer(handle.messages);
-            
-            rt_free(result);
-            clear_messages(&handle);
+            {
+                char *result = handle.get_answer(&handle, handle.messages);
+                rt_free(result);
+                clear_messages(&handle);
+            }
 
 #endif
         }
@@ -347,12 +347,16 @@ static int llm2rtt(int argc, char **argv)
         handle.line_curpos = 0;
         handle.device = RT_NULL;
         handle.rx_indicate = RT_NULL;
+        handle.stream_cb = RT_NULL;
+        handle.stream_user_data = RT_NULL;
     }
 
     rt_sem_init(&(handle.rx_sem), "llm_rxsem", 0, RT_IPC_FLAG_FIFO);
 
     handle.argc = argc;
     handle.get_answer = get_llm_answer;
+    handle.stream_cb = RT_NULL;
+    handle.stream_user_data = RT_NULL;
     if (!cJSON_IsArray(handle.messages))
     {
         handle.messages = cJSON_CreateArray();
