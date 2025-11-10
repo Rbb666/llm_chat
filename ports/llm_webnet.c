@@ -14,6 +14,7 @@
 #include <wn_module.h>
 
 #include "llm_config.h"
+#include <string.h>
 
 #define DBG_TAG              "llm_chat"
 #ifdef PKG_LLMCHAT_DBG
@@ -28,6 +29,70 @@ static int llm_webnet_init(void);
 #define llm_config (*llm_config_get())
 
 static llm_t llm_handle = RT_NULL;
+
+struct llm_stream_context
+{
+    struct webnet_session *session;
+    rt_bool_t has_delta;
+};
+
+static void llm_webnet_stream_send_event(struct webnet_session *session,
+        const char *event,
+        const char *data)
+{
+    if (session == RT_NULL)
+    {
+        return;
+    }
+
+    if (event && event[0])
+    {
+        webnet_session_write(session, (const rt_uint8_t *)"event: ", 7);
+        webnet_session_write(session, (const rt_uint8_t *)event, strlen(event));
+        webnet_session_write(session, (const rt_uint8_t *)"\n", 1);
+    }
+
+    if (data == RT_NULL)
+    {
+        webnet_session_write(session, (const rt_uint8_t *)"data:\n\n", 7);
+        return;
+    }
+
+    const char *cursor = data;
+    while (cursor)
+    {
+        const char *newline = strchr(cursor, '\n');
+        size_t len = newline ? (size_t)(newline - cursor) : strlen(cursor);
+
+        webnet_session_write(session, (const rt_uint8_t *)"data: ", 6);
+        if (len > 0)
+        {
+            webnet_session_write(session, (const rt_uint8_t *)cursor, len);
+        }
+        webnet_session_write(session, (const rt_uint8_t *)"\n", 1);
+
+        if (newline == RT_NULL)
+        {
+            break;
+        }
+        cursor = newline + 1;
+    }
+
+    webnet_session_write(session, (const rt_uint8_t *)"\n", 1);
+}
+
+static void llm_webnet_stream_on_chunk(const char *chunk, void *user_data)
+{
+    struct llm_stream_context *context = (struct llm_stream_context *)user_data;
+
+    if (context == RT_NULL || context->session == RT_NULL || chunk == RT_NULL || chunk[0] == '\0')
+    {
+        return;
+    }
+
+    llm_webnet_stream_send_event(context->session, "delta", chunk);
+    context->has_delta = RT_TRUE;
+}
 
 /** Save configuration to memory - simplified version
  *  Configuration is already in memory, no additional operations needed
@@ -478,6 +543,8 @@ static void cgi_chat_handler(struct webnet_session *session)
     cJSON *res_json = RT_NULL;
     char *res_str = RT_NULL;
     rt_size_t post_len = 0;
+    rt_bool_t stream_mode = RT_FALSE;
+    struct llm_stream_context stream_ctx = { RT_NULL, RT_FALSE };
 
     LOG_D("=== CGI chat called: method=%d, content_len=%d ===", session->request->method, session->request->content_length);
 
@@ -514,6 +581,28 @@ static void cgi_chat_handler(struct webnet_session *session)
     {
         LOG_E("Error: cJSON_Parse failed on: %s", post_data);
         goto error;
+    }
+
+    msg_item = cJSON_GetObjectItem(req_json, "stream");
+    if (msg_item)
+    {
+        if (cJSON_IsBool(msg_item))
+        {
+            stream_mode = cJSON_IsTrue(msg_item);
+        }
+        else if (cJSON_IsNumber(msg_item))
+        {
+            stream_mode = (msg_item->valuedouble != 0);
+        }
+        else if (cJSON_IsString(msg_item))
+        {
+            const char *stream_val = cJSON_GetStringValue(msg_item);
+            if (stream_val &&
+                    (strcmp(stream_val, "true") == 0 || strcmp(stream_val, "1") == 0 || strcmp(stream_val, "TRUE") == 0))
+            {
+                stream_mode = RT_TRUE;
+            }
+        }
     }
 
     /* Check whether this is a reset request */
@@ -564,10 +653,59 @@ static void cgi_chat_handler(struct webnet_session *session)
         goto error;
     }
 
+    if (llm_handle == RT_NULL)
+    {
+        LOG_E("Error: LLM handle is NULL");
+        goto error;
+    }
+
     add_message2messages(user_msg, "user", llm_handle);
 
+    if (stream_mode)
+    {
+        LOG_D("Streaming mode enabled for this request");
+
+        stream_ctx.session = session;
+
+        session->request->result_code = 200;
+        webnet_session_set_header(session, "text/event-stream", 200, "OK", -1);
+        webnet_session_write(session, (const rt_uint8_t *)":rt-thread-stream\n\n", strlen(":rt-thread-stream\n\n"));
+
+        llm_handle->stream_cb = llm_webnet_stream_on_chunk;
+        llm_handle->stream_user_data = &stream_ctx;
+
+        LOG_D("Calling get_llm_answer (streaming)...");
+        ai_reply = llm_handle->get_answer(llm_handle, llm_handle->messages);
+
+        llm_handle->stream_cb = RT_NULL;
+        llm_handle->stream_user_data = RT_NULL;
+
+        if (ai_reply == RT_NULL)
+        {
+            LOG_E("Error: streaming get_llm_answer returned NULL (check API/net)");
+            ai_reply = rt_strdup("Mock reply: Success! WebNet CGI + LLM integrated. (Local llm works; if real API fails, check key/net.)");
+        }
+
+        if (ai_reply != RT_NULL)
+        {
+            if (stream_ctx.has_delta == RT_FALSE)
+            {
+                llm_webnet_stream_send_event(session, "delta", ai_reply);
+            }
+            add_message2messages(ai_reply, "assistant", llm_handle);
+            llm_webnet_stream_send_event(session, "final", ai_reply);
+        }
+        else
+        {
+            llm_webnet_stream_send_event(session, "error", "LLM response failed");
+        }
+
+        llm_webnet_stream_send_event(session, "done", "[DONE]");
+        goto cleanup;
+    }
+
     LOG_D("Calling get_llm_answer...");
-    ai_reply = get_llm_answer(llm_handle->messages);
+    ai_reply = llm_handle->get_answer(llm_handle, llm_handle->messages);
     if (ai_reply == RT_NULL)
     {
         LOG_E("Error: get_llm_answer returned NULL (check API/net in CGI context)");
