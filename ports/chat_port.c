@@ -12,20 +12,38 @@
  */
 #include "llm.h"
 #include "webclient.h"
+#include "llm_config.h"
 #include <cJSON.h>
 
-/* Dynamic configuration support */
-extern struct {
-    char api_key[128];
-    char model_name[128];
-    char api_url[128];
-    rt_bool_t is_configured;
-} llm_config;
+static const char *get_dynamic_api_key(void)
+{
+    const llm_runtime_config_t *cfg = llm_config_get();
+    if (cfg && cfg->is_configured && cfg->api_key[0])
+    {
+        return cfg->api_key;
+    }
+    return PKG_LLM_API_KEY;
+}
 
-/* Macros for getting dynamic configuration */
-#define GET_DYNAMIC_API_KEY()     (llm_config.is_configured ? llm_config.api_key : PKG_LLM_API_KEY)
-#define GET_DYNAMIC_MODEL_NAME()  (llm_config.is_configured ? llm_config.model_name : PKG_LLM_MODEL_NAME)
-#define GET_DYNAMIC_API_URL()     (llm_config.is_configured ? llm_config.api_url : PKG_LLM_QWEN_API_URL)
+static const char *get_dynamic_model_name(void)
+{
+    const llm_runtime_config_t *cfg = llm_config_get();
+    if (cfg && cfg->is_configured && cfg->model_name[0])
+    {
+        return cfg->model_name;
+    }
+    return PKG_LLM_MODEL_NAME;
+}
+
+static const char *get_dynamic_api_url(void)
+{
+    const llm_runtime_config_t *cfg = llm_config_get();
+    if (cfg && cfg->is_configured && cfg->api_url[0])
+    {
+        return cfg->api_url;
+    }
+    return PKG_LLM_DEFAULT_API_URL;
+}
 
 #define WEB_SOCKET_BUF_SIZE PKG_WEB_SORKET_BUFSZ
 
@@ -49,7 +67,7 @@ rt_weak char *create_payload(cJSON *messages)
 {
     cJSON *requestRoot = cJSON_CreateObject();
     /* Use dynamically configured model name */
-    cJSON *model = cJSON_CreateString(GET_DYNAMIC_MODEL_NAME());
+    cJSON *model = cJSON_CreateString(get_dynamic_model_name());
     cJSON *messages_copy = cJSON_Duplicate(messages, 1);
     char *payload = NULL;
     cJSON_AddItemToObject(requestRoot, "model", model);
@@ -255,8 +273,8 @@ char *get_llm_answer(cJSON *messages)
 
 #endif
     /* Prepare authorization header - use dynamic configuration */
-    const char *current_api_key = GET_DYNAMIC_API_KEY();
-    const char *current_api_url = GET_DYNAMIC_API_URL();
+    const char *current_api_key = get_dynamic_api_key();
+    const char *current_api_url = get_dynamic_api_url();
 
     rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", current_api_key);
 
