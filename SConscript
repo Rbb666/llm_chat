@@ -2,16 +2,21 @@ from building import *
 
 cwd = GetCurrentDir()
 
-path = [cwd]
-path += [cwd + '/ports']
 src = []
+path = [cwd]
+path += [cwd + "/ports"]
+path += [cwd + "/config"]
 
-src += ['ports/chat_port.c']
-src +=['llm.c']
+src += ["llm.c"]
+src += ["config/llm_config.c"]
+src += ["ports/chat_port.c"]
 
-if GetDepend(['PKG_USING_LLMCHAT_DEMO']):
-    src += ['demo/llm_contory.c']
+if GetDepend(["PKG_USING_LLMCHAT_DEMO"]):
+    src += ["demo/llm_contory.c"]
 
-group = DefineGroup('llm', src, depend = ['PKG_USING_LLMCHAT'], CPPPATH = path)
+if GetDepend(["PKG_LLMCHAT_WEBNET_MODE"]):
+    src += ["ports/llm_webnet.c"]
 
-Return('group')
+group = DefineGroup("llm", src, depend=["PKG_USING_LLMCHAT"], CPPPATH=path)
+
+Return("group")
