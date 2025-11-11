@@ -103,6 +103,34 @@ rt_weak char *create_payload(cJSON *messages)
 
 ![](docs/10.png)
 
+
+
+### WebNet 浏览器交互
+
+1. 在 `menuconfig` 中启用 WebNet 支持：进入 `RT-Thread online packages → AI packages → Large Language Models(LLM) for RT-Thread`，勾选 `Enable llmchat webnet mode`。
+2. 确认底层网络配置（WLAN/以太网）可用，并在 `RT-Thread Components → Network` 中配置好设备的 IP、Gateway 等参数。
+3. 重新执行 `pkgs --update`，并编译固件；烧录或下载后重启设备。
+4. **首次运行**需要在文件系统根目录下创建 `/webnet`目录，然后需要将 `resource/index.html` 文件拷贝到此目录下，确保文件系统可写且容量充足。
+5. 需要在MSH终端输入：`webnet_llm_mode` 命令后，开启 webnet 服务。
+6. **需要保证和电脑在同一个网段**，然后在浏览器中访问 `http://<设备IP>`，即可进入图形化聊天界面：
+    - 左侧为会话列表，支持新建、切换、删除会话；
+    - 右侧为聊天区，消息实时渲染，代码块自动高亮；
+    - 输入框支持 `Enter` 发送、`Shift+Enter` 换行；
+    - 开启流式模式后，回复会逐字呈现，并在完成时自动渲染 Markdown。
+7. 若需清空服务器端状态，可点击左上角“新对话”或通过对话菜单删除会话。
+
+> 提示：如浏览器长时间无响应，请检查 TLS 配置、Wi-Fi 信号强度以及是否开启了代理；可在终端查看 `wifi`、`webnet` 相关日志定位问题。
+
+ 运行截图如下：
+
+ ![](docs/11.png)
+
+在浏览器中访问的效果如下：
+
+![](docs/demo.gif)
+
+
+
 ## API调用
 
 ### 创建与销毁
